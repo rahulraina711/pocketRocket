@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jet Fighter 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #87CEEB; }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px black;
+            pointer-events: none;
+        }
+        #controls-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: white;
+            font-family: Arial, sans-serif;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        Health: <span id="health">100</span><br>
+        Speed: <span id="speed">0</span>
+    </div>
+    <div id="controls-hint">
+        <b>Controls:</b><br>
+        W / S: Accelerate / Decelerate<br>
+        UP / DOWN Arrow: Pitch<br>
+        LEFT / RIGHT Arrow: Roll<br>
+        Click: Shoot
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <script src="game.js"></script>
+</body>
+</html>
