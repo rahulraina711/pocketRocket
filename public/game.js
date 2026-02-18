@@ -33,6 +33,8 @@ const speedMin = 0.5;
 const speedMax = 5.0;
 let currentSpeed = 1.0;
 const turnSpeed = 0.04;
+const turnSpeedPitchUp = 0.01
+const turnSpeedPitchUDown = 0.005
 let isDead = false; // New flag to disable controls
 
 const keys = { w: false, s: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
@@ -224,8 +226,8 @@ function animate() {
         if (keys['s']) currentSpeed = Math.max(currentSpeed - 0.05, speedMin);
         document.getElementById('speed').innerText = Math.round(currentSpeed * 10);
 
-        if (keys['ArrowUp']) myJet.rotateX(-turnSpeed);
-        if (keys['ArrowDown']) myJet.rotateX(turnSpeed);
+        if (keys['ArrowUp']) myJet.rotateX(-turnSpeedPitchUp);
+        if (keys['ArrowDown']) myJet.rotateX(turnSpeedPitchUDown);
         if (keys['ArrowLeft']) myJet.rotateZ(turnSpeed);
         if (keys['ArrowRight']) myJet.rotateZ(-turnSpeed);
 

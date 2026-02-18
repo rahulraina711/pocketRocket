@@ -25,10 +25,11 @@ io.on('connection', (socket) => {
     players[socket.id] = {
         id: socket.id,
         x: (Math.random() - 0.5) * 500,
-        y: 200, // Spawn higher up to avoid immediate crash
+        y: 200,
         z: (Math.random() - 0.5) * 500,
         quaternion: { x: 0, y: 0, z: 0, w: 1 },
-        health: 100
+        health: 100,
+        color: Math.random() * 0xffffff
     };
 
     socket.emit('currentPlayers', players);
