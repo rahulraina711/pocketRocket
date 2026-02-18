@@ -59,6 +59,7 @@ document.getElementById('start-btn').addEventListener('click', () => {
 });
 
 // --- Coin Logic ---
+// Big Coins (Radius 6, Height 1.5)
 const coinGeo = new THREE.CylinderGeometry(6, 6, 1.5, 32);
 coinGeo.rotateX(Math.PI / 2); 
 const coinMat = new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 100 });
@@ -75,52 +76,6 @@ function removeCoin(id) {
         scene.remove(coinMeshes[id]);
         delete coinMeshes[id];
     }
-}
-
-// --- SMOKE TRAIL LOGIC (NEW) ---
-let smokeParticles = [];
-
-function spawnSmoke(pos) {
-    const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.5 });
-    const mesh = new THREE.Mesh(geo, mat);
-    
-    // Jitter position slightly
-    mesh.position.set(
-        pos.x + (Math.random() - 0.5) * 0.5, 
-        pos.y + (Math.random() - 0.5) * 0.5, 
-        pos.z + (Math.random() - 0.5) * 0.5
-    );
-    mesh.rotation.set(Math.random(), Math.random(), Math.random());
-    
-    scene.add(mesh);
-    smokeParticles.push({ mesh: mesh, life: 1.0 });
-}
-
-function updateSmoke() {
-    for (let i = smokeParticles.length - 1; i >= 0; i--) {
-        const p = smokeParticles[i];
-        p.life -= 0.02; // Fade speed
-        p.mesh.material.opacity = p.life * 0.4;
-        
-        // Expand
-        const scale = 1 + (1 - p.life) * 3;
-        p.mesh.scale.set(scale, scale, scale);
-
-        if (p.life <= 0) {
-            scene.remove(p.mesh);
-            smokeParticles.splice(i, 1);
-        }
-    }
-}
-
-function emitTrails(jet) {
-    if (!jet || !jet.visible) return;
-    // Calculate world position of left and right engines (local z=2.8 is back)
-    const offsetLeft = new THREE.Vector3(-0.6, 0, 2.8).applyMatrix4(jet.matrixWorld);
-    const offsetRight = new THREE.Vector3(0.6, 0, 2.8).applyMatrix4(jet.matrixWorld);
-    spawnSmoke(offsetLeft);
-    spawnSmoke(offsetRight);
 }
 
 // --- Socket Events ---
@@ -296,7 +251,7 @@ function createJetMesh(color, name) {
 
     if (typeof createNameLabel === "function") {
         const label = createNameLabel(name); 
-        label.position.set(0, 10, 0); 
+        label.position.set(0, 10, 0); // Raised name label
         group.add(label);
     }
     return group;
@@ -370,11 +325,6 @@ function checkCollisions() {
 function animate() {
     requestAnimationFrame(animate);
     if (!gameStarted) return;
-
-    // SMOKE UPDATES
-    if (myJet && !isDead) emitTrails(myJet);
-    for (let id in otherPlayers) emitTrails(otherPlayers[id]);
-    updateSmoke();
 
     if (myJet && !isDead) {
         if (keys['w']) currentSpeed = Math.min(currentSpeed + 0.05, speedMax);
