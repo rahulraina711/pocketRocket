@@ -22,6 +22,20 @@ const floor = new THREE.Mesh(floorGeometry, floorMaterial);
 floor.rotation.x = Math.PI / 2;
 scene.add(floor);
 
+// --- Map Boundaries (The Kill Box) ---
+const boundarySize = 2000; // The map is 2000x2000
+const skyLimit = 800;      // Max height
+
+// Create a giant wireframe box to show the limits
+const boundaryGeo = new THREE.BoxGeometry(boundarySize, skyLimit, boundarySize);
+const boundaryEdges = new THREE.EdgesGeometry(boundaryGeo);
+const boundaryMat = new THREE.LineBasicMaterial({ color: 0xff0000 }); // Red lines
+const boundaryLines = new THREE.LineSegments(boundaryEdges, boundaryMat);
+
+// Position it so the bottom touches the floor (y=0)
+boundaryLines.position.y = skyLimit / 2; 
+scene.add(boundaryLines);
+
 // Game Variables
 let myJet;
 let otherPlayers = {};
@@ -33,7 +47,7 @@ const speedMin = 0.5;
 const speedMax = 5.0;
 let currentSpeed = 1.0;
 const turnSpeed = 0.04;
-const turnSpeedPitchUp = 0.01
+const turnSpeedPitchUp = 0.02
 const turnSpeedPitchUDown = 0.005
 let isDead = false; // New flag to disable controls
 
@@ -200,13 +214,27 @@ window.addEventListener('mousedown', () => {
 
 // --- Collision Logic ---
 function checkCollisions() {
-    if (!myJet || isDead) return; // Don't check collisions if already dead
+    if (!myJet || isDead) return; 
 
+    // 1. Ground Collision
     if (myJet.position.y < 2) {
         socket.emit('playerCrashed');
         return; 
     }
 
+    // 2. Map Boundary Collision (New)
+    const limit = 1000; // Half of 2000 (from center 0)
+    
+    if (Math.abs(myJet.position.x) > limit ||  // Too far X
+        Math.abs(myJet.position.z) > limit ||  // Too far Z
+        myJet.position.y > skyLimit) {         // Too high
+        
+        console.log("Left the mission area!");
+        socket.emit('playerCrashed');
+        return;
+    }
+
+    // 3. Building Collision
     const jetBox = new THREE.Box3().setFromObject(myJet);
     for (let box of buildingBoxes) {
         if (jetBox.intersectsBox(box)) {
