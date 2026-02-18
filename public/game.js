@@ -9,7 +9,6 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// Lighting
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -39,8 +38,9 @@ let otherPlayers = {};
 let bullets = [];
 let buildingMeshes = []; 
 let buildingBoxes = [];
+let coinMeshes = {}; 
 let isDead = false;
-let gameStarted = false; // Waiting for login
+let gameStarted = false;
 
 const speedMin = 0.5;
 const speedMax = 5.0;
@@ -49,22 +49,160 @@ const turnSpeed = 0.04;
 
 const keys = { w: false, s: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
 
-// --- LOGIN LOGIC ---
+// --- Setup ---
 document.getElementById('start-btn').addEventListener('click', () => {
     const nameInput = document.getElementById('username');
-    const name = nameInput.value.trim() || "Pilot"; // Default if empty
-    
+    const name = nameInput.value.trim() || "Pilot";
     document.getElementById('login-screen').style.display = 'none';
-    
-    // Tell server we are ready to join
     socket.emit('joinGame', name);
     gameStarted = true;
 });
 
+// --- Coin Logic ---
+const coinGeo = new THREE.CylinderGeometry(6, 6, 1.5, 32);
+coinGeo.rotateX(Math.PI / 2); 
+const coinMat = new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 100 });
 
-// --- 3D Functions ---
+function addCoin(data) {
+    const mesh = new THREE.Mesh(coinGeo, coinMat);
+    mesh.position.set(data.x, data.y, data.z);
+    scene.add(mesh);
+    coinMeshes[data.id] = mesh;
+}
 
-// 1. Function to create text label
+function removeCoin(id) {
+    if (coinMeshes[id]) {
+        scene.remove(coinMeshes[id]);
+        delete coinMeshes[id];
+    }
+}
+
+// --- SMOKE TRAIL LOGIC (NEW) ---
+let smokeParticles = [];
+
+function spawnSmoke(pos) {
+    const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.5 });
+    const mesh = new THREE.Mesh(geo, mat);
+    
+    // Jitter position slightly
+    mesh.position.set(
+        pos.x + (Math.random() - 0.5) * 0.5, 
+        pos.y + (Math.random() - 0.5) * 0.5, 
+        pos.z + (Math.random() - 0.5) * 0.5
+    );
+    mesh.rotation.set(Math.random(), Math.random(), Math.random());
+    
+    scene.add(mesh);
+    smokeParticles.push({ mesh: mesh, life: 1.0 });
+}
+
+function updateSmoke() {
+    for (let i = smokeParticles.length - 1; i >= 0; i--) {
+        const p = smokeParticles[i];
+        p.life -= 0.02; // Fade speed
+        p.mesh.material.opacity = p.life * 0.4;
+        
+        // Expand
+        const scale = 1 + (1 - p.life) * 3;
+        p.mesh.scale.set(scale, scale, scale);
+
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            smokeParticles.splice(i, 1);
+        }
+    }
+}
+
+function emitTrails(jet) {
+    if (!jet || !jet.visible) return;
+    // Calculate world position of left and right engines (local z=2.8 is back)
+    const offsetLeft = new THREE.Vector3(-0.6, 0, 2.8).applyMatrix4(jet.matrixWorld);
+    const offsetRight = new THREE.Vector3(0.6, 0, 2.8).applyMatrix4(jet.matrixWorld);
+    spawnSmoke(offsetLeft);
+    spawnSmoke(offsetRight);
+}
+
+// --- Socket Events ---
+socket.on('initBuildings', (data) => createBuildings(data));
+socket.on('initCoins', (coins) => { Object.values(coins).forEach(c => addCoin(c)); });
+socket.on('newCoin', (coin) => addCoin(coin));
+socket.on('removeCoin', (id) => removeCoin(id));
+
+socket.on('updateLeaderboard', (data) => {
+    const list = document.getElementById('leaderboard-list');
+    list.innerHTML = "";
+    data.forEach(p => {
+        const div = document.createElement('div');
+        div.style.marginBottom = "5px";
+        div.innerText = `${p.name}: ${p.score}`;
+        list.appendChild(div);
+    });
+});
+
+socket.on('currentPlayers', (players) => {
+    Object.keys(players).forEach((id) => {
+        if (id === socket.id) addMyJet(players[id]);
+        else addOtherJet(players[id]);
+    });
+});
+
+socket.on('newPlayer', (playerInfo) => addOtherJet(playerInfo));
+socket.on('playerDisconnected', (id) => {
+    if (otherPlayers[id]) {
+        scene.remove(otherPlayers[id]);
+        delete otherPlayers[id];
+    }
+});
+socket.on('playerMoved', (playerInfo) => {
+    if (otherPlayers[playerInfo.id]) {
+        otherPlayers[playerInfo.id].position.set(playerInfo.x, playerInfo.y, playerInfo.z);
+        const targetQuat = new THREE.Quaternion(playerInfo.quaternion._x, playerInfo.quaternion._y, playerInfo.quaternion._z, playerInfo.quaternion._w);
+        otherPlayers[playerInfo.id].quaternion.slerp(targetQuat, 0.5);
+    }
+});
+socket.on('playerShot', (data) => createBullet(data.position, data.quaternion, data.ownerId));
+socket.on('updateHealth', (data) => {
+    if (data.id === socket.id) {
+        document.getElementById('health').innerText = data.health;
+        if(myJet) {
+            myJet.children[0].material.color.setHex(0xff0000);
+            setTimeout(() => myJet.children[0].material.color.setHex(0x00ff00), 100);
+        }
+    }
+});
+socket.on('youDied', () => {
+    isDead = true;
+    document.getElementById('death-screen').style.display = 'block';
+    if(myJet) myJet.visible = false;
+    let countdown = 5;
+    document.getElementById('timer').innerText = countdown;
+    const interval = setInterval(() => {
+        countdown--;
+        document.getElementById('timer').innerText = countdown;
+        if (countdown <= 0) clearInterval(interval);
+    }, 1000);
+});
+socket.on('playerDied', (id) => { if (otherPlayers[id]) otherPlayers[id].visible = false; });
+socket.on('respawn', (data) => {
+    if (data.id === socket.id) {
+        isDead = false;
+        document.getElementById('death-screen').style.display = 'none';
+        if (myJet) {
+            myJet.visible = true;
+            myJet.position.set(data.x, data.y, data.z);
+            myJet.rotation.set(0, 0, 0); 
+            myJet.quaternion.set(0, 0, 0, 1);
+        }
+        document.getElementById('health').innerText = 100;
+        currentSpeed = 1.0;
+    } else if (otherPlayers[data.id]) {
+        otherPlayers[data.id].visible = true;
+        otherPlayers[data.id].position.set(data.x, data.y, data.z);
+    }
+});
+
+// --- Builder Functions ---
 function createNameLabel(name) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
@@ -72,62 +210,95 @@ function createNameLabel(name) {
     context.fillStyle = 'white';
     context.strokeStyle = 'black';
     context.lineWidth = 4;
-    
-    // Measure text
     const textWidth = context.measureText(name).width;
-    canvas.width = textWidth + 20;
-    canvas.height = 40;
-    
-    // Redraw with correct size
+    canvas.width = textWidth + 20; canvas.height = 40;
     context.font = 'Bold 24px Arial';
     context.fillStyle = 'white';
     context.strokeStyle = 'black';
     context.lineWidth = 4;
-    
     context.strokeText(name, 10, 30);
     context.fillText(name, 10, 30);
-    
     const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    
-    sprite.scale.set(10, 5, 1); // Adjust size relative to jet
-    sprite.position.set(0, 3, 0); // Float above the jet
-    
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture }));
+    sprite.scale.set(10, 5, 1); 
     return sprite;
 }
 
 function createJetMesh(color, name) {
     const group = new THREE.Group();
+    const matBody = new THREE.MeshPhongMaterial({ color: color, flatShading: true, shininess: 50 });
+    const matGrey = new THREE.MeshPhongMaterial({ color: 0x555555, flatShading: true });
+    const matDark = new THREE.MeshPhongMaterial({ color: 0x222222, flatShading: true });
+    const matGlass = new THREE.MeshPhongMaterial({ color: 0x00aaff, opacity: 0.6, transparent: true, shininess: 100 });
+    const matGlow = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+    const matMissile = new THREE.MeshPhongMaterial({ color: 0xffffff });
 
-    // Jet Body
-    const bodyGeo = new THREE.ConeGeometry(1, 4, 8);
-    bodyGeo.rotateX(Math.PI / 2);
-    const bodyMat = new THREE.MeshPhongMaterial({ color: color });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
-    group.add(body);
+    const fuselageGeo = new THREE.BoxGeometry(1.2, 1, 5);
+    const fusPos = fuselageGeo.attributes.position;
+    for(let i=0; i<fusPos.count; i++){
+        if(fusPos.getZ(i) < -1) { fusPos.setX(i, fusPos.getX(i)*0.7); fusPos.setY(i, fusPos.getY(i)*0.7); }
+    }
+    fuselageGeo.computeVertexNormals();
+    group.add(new THREE.Mesh(fuselageGeo, matBody));
 
-    // Wings
-    const wingGeo = new THREE.BoxGeometry(4, 0.1, 1.5);
-    const wingMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
-    const wings = new THREE.Mesh(wingGeo, wingMat);
-    group.add(wings);
+    const noseGeo = new THREE.ConeGeometry(0.5, 2.5, 8); noseGeo.rotateX(Math.PI/2);
+    const nose = new THREE.Mesh(noseGeo, matGrey); nose.position.z = -3.75; group.add(nose);
 
-    // Tail
-    const tailGeo = new THREE.BoxGeometry(1.5, 0.1, 1);
-    const tail = new THREE.Mesh(tailGeo, wingMat);
-    tail.position.set(0, 0, 1.5);
-    group.add(tail);
+    const cockpitGeo = new THREE.BoxGeometry(0.9, 0.6, 1.8);
+    const cockPos = cockpitGeo.attributes.position;
+    for(let i=0; i<cockPos.count; i++){
+        if(cockPos.getY(i) > 0) cockPos.setX(i, cockPos.getX(i)*0.7);
+        if(cockPos.getZ(i) < 0) cockPos.setY(i, cockPos.getY(i)*0.4);
+    }
+    cockpitGeo.computeVertexNormals();
+    const cockpit = new THREE.Mesh(cockpitGeo, matGlass); cockpit.position.set(0, 0.6, -1.0); group.add(cockpit);
 
-    const tailFinGeo = new THREE.BoxGeometry(0.1, 1, 1);
-    const tailFin = new THREE.Mesh(tailFinGeo, wingMat);
-    tailFin.position.set(0, 0.5, 1.5);
-    group.add(tailFin);
+    const intakeGeo = new THREE.BoxGeometry(0.6, 0.8, 2.5);
+    const iL = new THREE.Mesh(intakeGeo, matBody); iL.position.set(-0.9, 0, -0.5); group.add(iL);
+    const iR = new THREE.Mesh(intakeGeo, matBody); iR.position.set(0.9, 0, -0.5); group.add(iR);
+    const iIGeo = new THREE.PlaneGeometry(0.5, 0.7);
+    const iIL = new THREE.Mesh(iIGeo, matDark); iIL.position.set(-0.9, 0, -1.76); iIL.rotation.y = Math.PI; group.add(iIL);
+    const iIR = new THREE.Mesh(iIGeo, matDark); iIR.position.set(0.9, 0, -1.76); iIR.rotation.y = Math.PI; group.add(iIR);
 
-    // Add Name Label
-    const label = createNameLabel(name);
-    group.add(label);
+    const wingGeo = new THREE.BoxGeometry(4, 0.1, 2.5);
+    const wPos = wingGeo.attributes.position;
+    for(let i=0; i<wPos.count; i++){
+        wPos.setZ(i, wPos.getZ(i) + Math.abs(wPos.getX(i))*0.8);
+        if(Math.abs(wPos.getX(i))>1) wPos.setY(i, wPos.getY(i)*0.2);
+    }
+    wingGeo.computeVertexNormals();
+    const wings = new THREE.Mesh(wingGeo, matBody); wings.position.set(0, 0, 0.5); group.add(wings);
 
+    const tailGeo = new THREE.BoxGeometry(0.1, 1.8, 1.5);
+    const tPos = tailGeo.attributes.position;
+    for(let i=0; i<tPos.count; i++){ if(tPos.getY(i)>0) { tPos.setZ(i, tPos.getZ(i)+1.2); tPos.setZ(i, tPos.getZ(i)*0.7); } }
+    tailGeo.computeVertexNormals();
+    const tL = new THREE.Mesh(tailGeo, matBody); tL.position.set(-0.7, 0.8, 2); tL.rotation.z = Math.PI/12; group.add(tL);
+    const tR = new THREE.Mesh(tailGeo, matBody); tR.position.set(0.7, 0.8, 2); tR.rotation.z = -Math.PI/12; group.add(tR);
+
+    const eGeo = new THREE.BoxGeometry(2.5, 0.1, 1.2);
+    const ePos = eGeo.attributes.position;
+    for(let i=0; i<ePos.count; i++) ePos.setZ(i, ePos.getZ(i)+Math.abs(ePos.getX(i))*0.5);
+    eGeo.computeVertexNormals();
+    const elev = new THREE.Mesh(eGeo, matBody); elev.position.set(0, 0, 2.2); group.add(elev);
+
+    const exGeo = new THREE.CylinderGeometry(0.5, 0.3, 0.5, 12); exGeo.rotateX(Math.PI/2);
+    const exL = new THREE.Mesh(exGeo, matDark); exL.position.set(-0.5, 0, 2.75); group.add(exL);
+    const exR = new THREE.Mesh(exGeo, matDark); exR.position.set(0.5, 0, 2.75); group.add(exR);
+    const gGeo = new THREE.CylinderGeometry(0.25, 0.1, 0.1, 8); gGeo.rotateX(Math.PI/2);
+    const gL = new THREE.Mesh(gGeo, matGlow); gL.position.set(-0.5, 0, 2.8); group.add(gL);
+    const gR = new THREE.Mesh(gGeo, matGlow); gR.position.set(0.5, 0, 2.8); group.add(gR);
+
+    const mGeo = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 8); mGeo.rotateX(Math.PI/2);
+    const mhGeo = new THREE.ConeGeometry(0.08, 0.3, 8); mhGeo.rotateX(Math.PI/2); mhGeo.translate(0, 0, -0.9);
+    const m1 = new THREE.Mesh(mGeo, matMissile); m1.add(new THREE.Mesh(mhGeo, matMissile)); m1.position.set(-2.5, -0.2, 0.5); group.add(m1);
+    const m2 = m1.clone(); m2.position.set(2.5, -0.2, 0.5); group.add(m2);
+
+    if (typeof createNameLabel === "function") {
+        const label = createNameLabel(name); 
+        label.position.set(0, 10, 0); 
+        group.add(label);
+    }
     return group;
 }
 
@@ -144,91 +315,11 @@ function createBuildings(data) {
     });
 }
 
-// --- Socket Events ---
-socket.on('initBuildings', (data) => createBuildings(data));
-
-socket.on('currentPlayers', (players) => {
-    Object.keys(players).forEach((id) => {
-        if (id === socket.id) addMyJet(players[id]);
-        else addOtherJet(players[id]);
-    });
-});
-
-socket.on('newPlayer', (playerInfo) => addOtherJet(playerInfo));
-
-socket.on('playerDisconnected', (id) => {
-    if (otherPlayers[id]) {
-        scene.remove(otherPlayers[id]);
-        delete otherPlayers[id];
-    }
-});
-
-socket.on('playerMoved', (playerInfo) => {
-    if (otherPlayers[playerInfo.id]) {
-        otherPlayers[playerInfo.id].position.set(playerInfo.x, playerInfo.y, playerInfo.z);
-        
-        // Interpolate rotation for smoothness
-        const targetQuat = new THREE.Quaternion(playerInfo.quaternion._x, playerInfo.quaternion._y, playerInfo.quaternion._z, playerInfo.quaternion._w);
-        otherPlayers[playerInfo.id].quaternion.slerp(targetQuat, 0.5);
-    }
-});
-
-socket.on('playerShot', (data) => createBullet(data.position, data.quaternion, data.ownerId));
-
-socket.on('updateHealth', (data) => {
-    if (data.id === socket.id) {
-        document.getElementById('health').innerText = data.health;
-        // Flash red
-        if(myJet) {
-            myJet.children[0].material.color.setHex(0xff0000);
-            setTimeout(() => myJet.children[0].material.color.setHex(0x00ff00), 100);
-        }
-    }
-});
-
-socket.on('youDied', () => {
-    isDead = true;
-    document.getElementById('death-screen').style.display = 'block';
-    if(myJet) myJet.visible = false;
-    
-    let countdown = 5;
-    document.getElementById('timer').innerText = countdown;
-    const interval = setInterval(() => {
-        countdown--;
-        document.getElementById('timer').innerText = countdown;
-        if (countdown <= 0) clearInterval(interval);
-    }, 1000);
-});
-
-socket.on('playerDied', (id) => {
-    if (otherPlayers[id]) otherPlayers[id].visible = false;
-});
-
-socket.on('respawn', (data) => {
-    if (data.id === socket.id) {
-        isDead = false;
-        document.getElementById('death-screen').style.display = 'none';
-        if (myJet) {
-            myJet.visible = true;
-            myJet.position.set(data.x, data.y, data.z);
-            myJet.rotation.set(0, 0, 0); 
-            myJet.quaternion.set(0, 0, 0, 1);
-        }
-        document.getElementById('health').innerText = 100;
-        currentSpeed = 1.0;
-    } 
-    else if (otherPlayers[data.id]) {
-        otherPlayers[data.id].visible = true;
-        otherPlayers[data.id].position.set(data.x, data.y, data.z);
-    }
-});
-
 function addMyJet(playerInfo) {
     myJet = createJetMesh(playerInfo.color, playerInfo.name);
     myJet.position.set(playerInfo.x, playerInfo.y, playerInfo.z);
     scene.add(myJet);
 }
-
 function addOtherJet(playerInfo) {
     const jet = createJetMesh(playerInfo.color, playerInfo.name);
     jet.position.set(playerInfo.x, playerInfo.y, playerInfo.z);
@@ -236,7 +327,6 @@ function addOtherJet(playerInfo) {
     scene.add(jet);
     otherPlayers[playerInfo.id] = jet;
 }
-
 function createBullet(pos, quat, ownerId) {
     const geo = new THREE.SphereGeometry(0.2, 4, 4);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
@@ -248,67 +338,70 @@ function createBullet(pos, quat, ownerId) {
     bullets.push({ mesh: bullet, life: 100 });
 }
 
-// --- Inputs ---
+// --- Inputs & Collisions ---
 window.addEventListener('keydown', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
 window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
-window.addEventListener('mousedown', () => {
-    if (myJet && !isDead && gameStarted) socket.emit('shoot', { position: myJet.position, quaternion: myJet.quaternion });
-});
+window.addEventListener('mousedown', () => { if (myJet && !isDead && gameStarted) socket.emit('shoot', { position: myJet.position, quaternion: myJet.quaternion }); });
 
 function checkCollisions() {
     if (!myJet || isDead) return;
 
-    if (myJet.position.y < 2) { socket.emit('playerCrashed'); return; }
-
-    const limit = boundarySize / 2;
-    if (Math.abs(myJet.position.x) > limit || Math.abs(myJet.position.z) > limit || myJet.position.y > skyLimit) {
-        socket.emit('playerCrashed');
-        return;
+    // Coins
+    for (let id in coinMeshes) {
+        if (myJet.position.distanceTo(coinMeshes[id].position) < 15) { 
+            socket.emit('collectCoin', id);
+            removeCoin(id); 
+        }
     }
 
+    // World & Buildings
+    if (myJet.position.y < 2) { socket.emit('playerCrashed'); return; }
+    const limit = boundarySize / 2;
+    if (Math.abs(myJet.position.x) > limit || Math.abs(myJet.position.z) > limit || myJet.position.y > skyLimit) {
+        socket.emit('playerCrashed'); return;
+    }
     const jetBox = new THREE.Box3().setFromObject(myJet);
     for (let box of buildingBoxes) {
-        if (jetBox.intersectsBox(box)) {
-            socket.emit('playerCrashed');
-            return;
-        }
+        if (jetBox.intersectsBox(box)) { socket.emit('playerCrashed'); return; }
     }
 }
 
-// --- Main Loop ---
+// --- Loop ---
 function animate() {
     requestAnimationFrame(animate);
-    if (!gameStarted) return; // Wait for login
+    if (!gameStarted) return;
+
+    // SMOKE UPDATES
+    if (myJet && !isDead) emitTrails(myJet);
+    for (let id in otherPlayers) emitTrails(otherPlayers[id]);
+    updateSmoke();
 
     if (myJet && !isDead) {
         if (keys['w']) currentSpeed = Math.min(currentSpeed + 0.05, speedMax);
         if (keys['s']) currentSpeed = Math.max(currentSpeed - 0.05, speedMin);
         document.getElementById('speed').innerText = Math.round(currentSpeed * 10);
-
         if (keys['ArrowUp']) myJet.rotateX(-turnSpeed);
         if (keys['ArrowDown']) myJet.rotateX(turnSpeed);
         if (keys['ArrowLeft']) myJet.rotateZ(turnSpeed);
         if (keys['ArrowRight']) myJet.rotateZ(-turnSpeed);
-
         myJet.translateZ(-currentSpeed);
 
-        // Camera Follow
         const relativeCameraOffset = new THREE.Vector3(0, 10, 25);
         const cameraOffset = relativeCameraOffset.applyMatrix4(myJet.matrixWorld);
         camera.position.lerp(cameraOffset, 0.1);
         camera.lookAt(myJet.position);
 
-        socket.emit('playerMovement', {
-            x: myJet.position.x,
-            y: myJet.position.y,
-            z: myJet.position.z,
-            quaternion: myJet.quaternion
-        });
-
+        socket.emit('playerMovement', { x: myJet.position.x, y: myJet.position.y, z: myJet.position.z, quaternion: myJet.quaternion });
         checkCollisions();
     }
 
-    // Bullets
+    // Rotate visual coins
+    const time = Date.now() * 0.001;
+    for (let id in coinMeshes) {
+        coinMeshes[id].rotation.y += 0.02;
+        coinMeshes[id].position.y += Math.sin(time * 2) * 0.05; 
+    }
+
     for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.mesh.translateZ(-5);
@@ -318,24 +411,13 @@ function animate() {
                 const enemy = otherPlayers[id];
                 if (enemy.visible && b.mesh.position.distanceTo(enemy.position) < 5) {
                     socket.emit('bulletHit', id);
-                    b.life = 0;
-                    break;
+                    b.life = 0; break;
                 }
             }
         }
-        if (b.life <= 0) {
-            scene.remove(b.mesh);
-            bullets.splice(i, 1);
-        }
+        if (b.life <= 0) { scene.remove(b.mesh); bullets.splice(i, 1); }
     }
-
     renderer.render(scene, camera);
 }
-
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 animate();
