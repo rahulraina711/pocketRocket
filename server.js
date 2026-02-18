@@ -7,35 +7,46 @@ const path = require('path');
 app.use(express.static(path.join(__dirname, 'public')));
 
 let players = {};
-// Generate fixed buildings once on server start
 const buildings = [];
+
+// Generate buildings once
 for (let i = 0; i < 50; i++) {
     buildings.push({
         x: (Math.random() - 0.5) * 1000,
         z: (Math.random() - 0.5) * 1000,
-        w: 30 + Math.random() * 50, // Width
-        h: 50 + Math.random() * 150, // Height
-        d: 30 + Math.random() * 50  // Depth
+        w: 30 + Math.random() * 50,
+        h: 50 + Math.random() * 150,
+        d: 30 + Math.random() * 50
     });
 }
 
 io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
+    console.log('User connected (Waiting for login):', socket.id);
 
-    players[socket.id] = {
-        id: socket.id,
-        x: (Math.random() - 0.5) * 500,
-        y: 200,
-        z: (Math.random() - 0.5) * 500,
-        quaternion: { x: 0, y: 0, z: 0, w: 1 },
-        health: 100,
-        color: Math.random() * 0xffffff
-    };
-
-    socket.emit('currentPlayers', players);
-    // Send building data to the new player
+    // Send buildings immediately so they can load the map
     socket.emit('initBuildings', buildings);
-    socket.broadcast.emit('newPlayer', players[socket.id]);
+
+    // 1. Listen for "joinGame" before creating the player
+    socket.on('joinGame', (name) => {
+        console.log(`Player Joined: ${name} (${socket.id})`);
+
+        players[socket.id] = {
+            id: socket.id,
+            name: name, // Store the name
+            x: (Math.random() - 0.5) * 500,
+            y: 200,
+            z: (Math.random() - 0.5) * 500,
+            quaternion: { x: 0, y: 0, z: 0, w: 1 },
+            health: 100,
+            color: Math.random() * 0xffffff
+        };
+
+        // Send existing players to the new guy
+        socket.emit('currentPlayers', players);
+        
+        // Notify others about the new guy (including name)
+        socket.broadcast.emit('newPlayer', players[socket.id]);
+    });
 
     socket.on('playerMovement', (movementData) => {
         if (players[socket.id]) {
@@ -47,11 +58,11 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('shoot', (bulletData) => {
+    socket.on('shoot', (data) => {
         io.emit('playerShot', { 
             ownerId: socket.id, 
-            position: bulletData.position, 
-            quaternion: bulletData.quaternion 
+            position: data.position, 
+            quaternion: data.quaternion 
         });
     });
 
@@ -66,42 +77,35 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Handle crashes (Ground or Building)
     socket.on('playerCrashed', () => {
-        if (players[socket.id]) {
-            respawnPlayer(socket.id);
-        }
+        if (players[socket.id]) respawnPlayer(socket.id);
     });
 
     socket.on('disconnect', () => {
-        delete players[socket.id];
-        io.emit('playerDisconnected', socket.id);
+        if (players[socket.id]) {
+            console.log(`Player Left: ${players[socket.id].name}`);
+            delete players[socket.id];
+            io.emit('playerDisconnected', socket.id);
+        }
     });
 });
 
 function respawnPlayer(id) {
     if (players[id]) {
-        // 1. Tell the specific player they died (to show UI)
         io.to(id).emit('youDied');
-        
-        // 2. Tell everyone else this player died (to remove their jet from screen temporarily)
         io.emit('playerDied', id);
 
-        // 3. Wait 5 seconds, then reset and respawn
         setTimeout(() => {
-            if (players[id]) { // Check if player is still connected
+            if (players[id]) {
                 players[id].health = 100;
                 players[id].x = (Math.random() - 0.5) * 500;
                 players[id].y = 200;
                 players[id].z = (Math.random() - 0.5) * 500;
                 players[id].quaternion = { x: 0, y: 0, z: 0, w: 1 };
-                
                 io.emit('respawn', players[id]);
             }
         }, 5000);
     }
 }
 
-http.listen(3000, () => {
-    console.log('Server running on port 3000');
-});
+http.listen(3000, () => { console.log('Server running on port 3000'); });
