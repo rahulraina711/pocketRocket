@@ -27,17 +27,17 @@ let myJet;
 let otherPlayers = {};
 let bullets = [];
 let buildingMeshes = []; 
-let buildingBoxes = []; // For collision detection
+let buildingBoxes = [];
 
 const speedMin = 0.5;
 const speedMax = 5.0;
 let currentSpeed = 1.0;
 const turnSpeed = 0.04;
+let isDead = false; // New flag to disable controls
 
 const keys = { w: false, s: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
 
 // --- 3D Builder Functions ---
-
 function createJetMesh(color) {
     const group = new THREE.Group();
     const bodyGeo = new THREE.ConeGeometry(1, 4, 8);
@@ -63,16 +63,12 @@ function createJetMesh(color) {
 function createBuildings(data) {
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshPhongMaterial({ color: 0x555555 });
-
     data.forEach(b => {
         const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.set(b.x, b.h / 2, b.z); // y is half height so it sits on floor
+        mesh.position.set(b.x, b.h / 2, b.z);
         mesh.scale.set(b.w, b.h, b.d);
         scene.add(mesh);
-        
         buildingMeshes.push(mesh);
-
-        // Create a Box3 for collision detection
         const box = new THREE.Box3().setFromObject(mesh);
         buildingBoxes.push(box);
     });
@@ -80,9 +76,7 @@ function createBuildings(data) {
 
 // --- Socket Events ---
 
-socket.on('initBuildings', (data) => {
-    createBuildings(data);
-});
+socket.on('initBuildings', (data) => createBuildings(data));
 
 socket.on('currentPlayers', (players) => {
     Object.keys(players).forEach((id) => {
@@ -104,10 +98,7 @@ socket.on('playerMoved', (playerInfo) => {
     if (otherPlayers[playerInfo.id]) {
         otherPlayers[playerInfo.id].position.set(playerInfo.x, playerInfo.y, playerInfo.z);
         otherPlayers[playerInfo.id].quaternion.set(
-            playerInfo.quaternion._x,
-            playerInfo.quaternion._y,
-            playerInfo.quaternion._z,
-            playerInfo.quaternion._w
+            playerInfo.quaternion._x, playerInfo.quaternion._y, playerInfo.quaternion._z, playerInfo.quaternion._w
         );
     }
 });
@@ -122,13 +113,53 @@ socket.on('updateHealth', (data) => {
     }
 });
 
+// NEW: Handle Death UI
+socket.on('youDied', () => {
+    isDead = true;
+    const screen = document.getElementById('death-screen');
+    const timerSpan = document.getElementById('timer');
+    screen.style.display = 'block';
+    
+    // Hide my jet locally while dead
+    if(myJet) myJet.visible = false;
+
+    let countdown = 5;
+    timerSpan.innerText = countdown;
+    
+    const interval = setInterval(() => {
+        countdown--;
+        timerSpan.innerText = countdown;
+        if (countdown <= 0) clearInterval(interval);
+    }, 1000);
+});
+
+// NEW: Handle others dying
+socket.on('playerDied', (id) => {
+    if (otherPlayers[id]) {
+        // We could play an explosion here
+        otherPlayers[id].visible = false; // Hide them until respawn
+    }
+});
+
 socket.on('respawn', (data) => {
+    // If it's me
     if (data.id === socket.id) {
-        myJet.position.set(data.x, data.y, data.z);
-        // Reset rotation to flat
-        myJet.rotation.set(0, 0, 0); 
+        isDead = false;
+        document.getElementById('death-screen').style.display = 'none';
+        
+        if (myJet) {
+            myJet.visible = true;
+            myJet.position.set(data.x, data.y, data.z);
+            myJet.rotation.set(0, 0, 0); 
+            myJet.quaternion.set(0, 0, 0, 1);
+        }
         document.getElementById('health').innerText = 100;
         currentSpeed = 1.0;
+    } 
+    // If it's someone else
+    else if (otherPlayers[data.id]) {
+        otherPlayers[data.id].visible = true;
+        otherPlayers[data.id].position.set(data.x, data.y, data.z);
     }
 });
 
@@ -141,6 +172,7 @@ function addMyJet(playerInfo) {
 function addOtherJet(playerInfo) {
     const jet = createJetMesh(0xff0000);
     jet.position.set(playerInfo.x, playerInfo.y, playerInfo.z);
+    jet.playerId = playerInfo.id;
     scene.add(jet);
     otherPlayers[playerInfo.id] = jet;
 }
@@ -160,28 +192,22 @@ function createBullet(pos, quat, ownerId) {
 window.addEventListener('keydown', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
 window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
 window.addEventListener('mousedown', () => {
-    if (myJet) socket.emit('shoot', { position: myJet.position, quaternion: myJet.quaternion });
+    // Cannot shoot if dead
+    if (myJet && !isDead) socket.emit('shoot', { position: myJet.position, quaternion: myJet.quaternion });
 });
 
 // --- Collision Logic ---
 function checkCollisions() {
-    if (!myJet) return;
+    if (!myJet || isDead) return; // Don't check collisions if already dead
 
-    // 1. Ground Collision
-    // Jet radius is roughly 1-2 units, floor is at y=0
     if (myJet.position.y < 2) {
-        console.log("Crashed into ground!");
         socket.emit('playerCrashed');
         return; 
     }
 
-    // 2. Building Collision
-    // We create a bounding box for the jet for this frame
     const jetBox = new THREE.Box3().setFromObject(myJet);
-
     for (let box of buildingBoxes) {
         if (jetBox.intersectsBox(box)) {
-            console.log("Crashed into building!");
             socket.emit('playerCrashed');
             return;
         }
@@ -192,12 +218,12 @@ function checkCollisions() {
 function animate() {
     requestAnimationFrame(animate);
 
-    if (myJet) {
+    // Only move if jet exists and player is NOT dead
+    if (myJet && !isDead) {
         if (keys['w']) currentSpeed = Math.min(currentSpeed + 0.05, speedMax);
         if (keys['s']) currentSpeed = Math.max(currentSpeed - 0.05, speedMin);
         document.getElementById('speed').innerText = Math.round(currentSpeed * 10);
 
-        // Inverted Pitch (Up Arrow = Nose Down)
         if (keys['ArrowUp']) myJet.rotateX(-turnSpeed);
         if (keys['ArrowDown']) myJet.rotateX(turnSpeed);
         if (keys['ArrowLeft']) myJet.rotateZ(turnSpeed);
@@ -205,7 +231,6 @@ function animate() {
 
         myJet.translateZ(-currentSpeed);
 
-        // Camera Follow
         const relativeCameraOffset = new THREE.Vector3(0, 10, 25);
         const cameraOffset = relativeCameraOffset.applyMatrix4(myJet.matrixWorld);
         camera.position.lerp(cameraOffset, 0.1);
@@ -218,19 +243,20 @@ function animate() {
             quaternion: myJet.quaternion
         });
 
-        // Check for collisions
         checkCollisions();
     }
 
-    // Bullets
+    // Bullets (Always update bullets so they don't freeze when I die)
     for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.mesh.translateZ(-5);
         b.life--;
-        if (b.mesh.ownerId === socket.id) {
+        // Only calculate hits if I am alive and I own the bullet
+        if (b.mesh.ownerId === socket.id && !isDead) {
             for (let id in otherPlayers) {
                 const enemy = otherPlayers[id];
-                if (b.mesh.position.distanceTo(enemy.position) < 5) {
+                // Simple check if enemy is visible (alive)
+                if (enemy.visible && b.mesh.position.distanceTo(enemy.position) < 5) {
                     socket.emit('bulletHit', id);
                     b.life = 0;
                     break;

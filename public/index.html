@@ -5,26 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jet Fighter 3D</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #87CEEB; }
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: Arial, sans-serif; }
+        
         #ui {
             position: absolute;
             top: 20px;
             left: 20px;
             color: white;
-            font-family: Arial, sans-serif;
             font-weight: bold;
             text-shadow: 1px 1px 2px black;
             pointer-events: none;
+            z-index: 10;
         }
+
+        #death-screen {
+            display: none; /* Hidden by default */
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: red;
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 20;
+            border: 2px solid red;
+        }
+
+        #death-screen h1 { margin: 0 0 10px 0; font-size: 40px; text-transform: uppercase; }
+        #timer { color: white; font-size: 24px; }
+
         #controls-hint {
             position: absolute;
             bottom: 20px;
             left: 20px;
             color: white;
-            font-family: Arial, sans-serif;
             background: rgba(0,0,0,0.5);
             padding: 10px;
             border-radius: 5px;
+            z-index: 10;
         }
     </style>
 </head>
@@ -33,6 +53,12 @@
         Health: <span id="health">100</span><br>
         Speed: <span id="speed">0</span>
     </div>
+
+    <div id="death-screen">
+        <h1>U DIED</h1>
+        <div>Respawning in <span id="timer">5</span>...</div>
+    </div>
+
     <div id="controls-hint">
         <b>Controls:</b><br>
         W / S: Accelerate / Decelerate<br>
@@ -43,7 +69,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
     <script src="game.js"></script>
 </body>
 </html>

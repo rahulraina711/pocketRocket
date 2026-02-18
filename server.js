@@ -80,12 +80,24 @@ io.on('connection', (socket) => {
 
 function respawnPlayer(id) {
     if (players[id]) {
-        players[id].health = 100;
-        players[id].x = (Math.random() - 0.5) * 500;
-        players[id].y = 200; // Reset height
-        players[id].z = (Math.random() - 0.5) * 500;
-        io.emit('playerDied', id); // Play effect
-        io.emit('respawn', players[id]);
+        // 1. Tell the specific player they died (to show UI)
+        io.to(id).emit('youDied');
+        
+        // 2. Tell everyone else this player died (to remove their jet from screen temporarily)
+        io.emit('playerDied', id);
+
+        // 3. Wait 5 seconds, then reset and respawn
+        setTimeout(() => {
+            if (players[id]) { // Check if player is still connected
+                players[id].health = 100;
+                players[id].x = (Math.random() - 0.5) * 500;
+                players[id].y = 200;
+                players[id].z = (Math.random() - 0.5) * 500;
+                players[id].quaternion = { x: 0, y: 0, z: 0, w: 1 };
+                
+                io.emit('respawn', players[id]);
+            }
+        }, 5000);
     }
 }
 
