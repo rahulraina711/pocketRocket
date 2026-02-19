@@ -15,7 +15,7 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(100, 100, 50);
 scene.add(dirLight);
 
-// --- Procedural Terrain ---
+// --- Procedural Terrain & Biomes ---
 function getTerrainHeight(x, z) {
     let height = Math.sin(x * 0.004) * Math.cos(z * 0.004) * 150;
     height += Math.sin(x * 0.015) * Math.cos(z * 0.01) * 40;
@@ -27,14 +27,53 @@ function getTerrainHeight(x, z) {
 const terrainGeo = new THREE.PlaneGeometry(2000, 2000, 80, 80);
 terrainGeo.rotateX(-Math.PI / 2);
 const pos = terrainGeo.attributes.position;
+
+// NEW: Array to hold our vertex colors
+const colors = []; 
+const color = new THREE.Color();
+
 for (let i = 0; i < pos.count; i++) {
-    pos.setY(i, getTerrainHeight(pos.getX(i), pos.getZ(i)));
+    const h = getTerrainHeight(pos.getX(i), pos.getZ(i));
+    pos.setY(i, h);
+
+    // Color the terrain based on how high it is!
+    if (h < 15) {
+        color.setHex(0xC2B280); // Sand / Beach
+    } else if (h < 65) {
+        color.setHex(0x347028); // Lush Grass
+    } else if (h < 110) {
+        color.setHex(0x6a737b); // Grey Rock
+    } else {
+        color.setHex(0xffffff); // Snow Caps
+    }
+    colors.push(color.r, color.g, color.b);
 }
+
+// Apply the colors to the geometry
+terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 terrainGeo.computeVertexNormals(); 
 
-const terrainMat = new THREE.MeshPhongMaterial({ color: 0x2d5a27, flatShading: true, shininess: 0 });
+const terrainMat = new THREE.MeshPhongMaterial({ 
+    vertexColors: true, // THIS TELLS IT TO USE OUR HEIGHT COLORS
+    flatShading: true, 
+    shininess: 0 
+});
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 scene.add(terrain);
+
+// --- The Animated Ocean ---
+// const oceanGeo = new THREE.PlaneGeometry(2000, 2000);
+// oceanGeo.rotateX(-Math.PI / 2);
+// const oceanMat = new THREE.MeshPhongMaterial({
+//     color: 0x0088cc,       // Deep ocean blue
+//     transparent: true,     // Make it see-through!
+//     opacity: 0.75,
+//     shininess: 100,        // Makes the sunlight reflect off the water
+//     flatShading: true
+// });
+// const ocean = new THREE.Mesh(oceanGeo, oceanMat);
+// ocean.position.y = 10;     // Set water level just below the sand
+// scene.add(ocean);
 
 const boundarySize = 2000;
 const skyLimit = 800;
@@ -431,17 +470,20 @@ document.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key)) keys
 function checkCollisions() {
     if (!myJet || isDead || isGameOver) return;
     
+    // Coins
     for (let id in coinMeshes) {
         if (myJet.position.distanceTo(coinMeshes[id].position) < 15) { 
             socket.emit('collectCoin', id); removeCoin(id); 
         }
     }
     
+    // Just the pure Terrain height check again!
     const groundHeight = getTerrainHeight(myJet.position.x, myJet.position.z);
     if (myJet.position.y < groundHeight + 2) { 
         socket.emit('playerCrashed'); return; 
     }
     
+    // World bounds
     const limit = boundarySize / 2;
     if (Math.abs(myJet.position.x) > limit || Math.abs(myJet.position.z) > limit || myJet.position.y > skyLimit) {
         socket.emit('playerCrashed'); return;
