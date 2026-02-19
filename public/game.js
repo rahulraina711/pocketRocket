@@ -112,9 +112,16 @@ socket.on('playerDisconnected', (id) => {
 });
 socket.on('playerMoved', (playerInfo) => {
     if (otherPlayers[playerInfo.id]) {
-        otherPlayers[playerInfo.id].position.set(playerInfo.x, playerInfo.y, playerInfo.z);
-        const targetQuat = new THREE.Quaternion(playerInfo.quaternion._x, playerInfo.quaternion._y, playerInfo.quaternion._z, playerInfo.quaternion._w);
-        otherPlayers[playerInfo.id].quaternion.slerp(targetQuat, 0.5);
+        // DON'T snap position. Save it as the new target to glide towards.
+        otherPlayers[playerInfo.id].targetPosition.set(playerInfo.x, playerInfo.y, playerInfo.z);
+        
+        // Save target rotation
+        otherPlayers[playerInfo.id].targetQuaternion.set(
+            playerInfo.quaternion._x, 
+            playerInfo.quaternion._y, 
+            playerInfo.quaternion._z, 
+            playerInfo.quaternion._w
+        );
     }
 });
 socket.on('playerShot', (data) => createBullet(data.position, data.quaternion, data.ownerId));
@@ -305,6 +312,11 @@ function addOtherJet(playerInfo) {
     const jet = createJetMesh(playerInfo.color, playerInfo.name);
     jet.position.set(playerInfo.x, playerInfo.y, playerInfo.z);
     jet.playerId = playerInfo.id;
+    
+    // NEW: Initialize target variables for smooth gliding
+    jet.targetPosition = new THREE.Vector3(playerInfo.x, playerInfo.y, playerInfo.z);
+    jet.targetQuaternion = new THREE.Quaternion(0, 0, 0, 1);
+    
     scene.add(jet);
     otherPlayers[playerInfo.id] = jet;
 }
@@ -372,6 +384,16 @@ function animate() {
 
         socket.emit('playerMovement', { x: myJet.position.x, y: myJet.position.y, z: myJet.position.z, quaternion: myJet.quaternion });
         checkCollisions();
+    }
+
+    // --- NEW: SMOOTH INTERPOLATION FOR OTHER PLAYERS ---
+    for (let id in otherPlayers) {
+        const enemy = otherPlayers[id];
+        if (enemy.targetPosition && enemy.visible) {
+            // Glide 20% of the distance to the target per frame (0.2)
+            enemy.position.lerp(enemy.targetPosition, 0.2);
+            enemy.quaternion.slerp(enemy.targetQuaternion, 0.2);
+        }
     }
 
     // Rotate visual coins
