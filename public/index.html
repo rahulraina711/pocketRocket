@@ -50,8 +50,17 @@
 </head>
 <body>
     <div id="ui">
-        Health: <span id="health">100</span><br>
-        Speed: <span id="speed">0</span>
+        <div style="margin-bottom: 5px; font-size: 18px;">HULL INTEGRITY</div>
+        <div style="width: 250px; height: 20px; background: rgba(255, 0, 0, 0.4); border: 2px solid white; border-radius: 5px; box-shadow: 0 0 5px black;">
+            <div id="health-bar" style="width: 100%; height: 100%; background: #00ff00; transition: width 0.3s ease-in-out, background-color 0.3s;"></div>
+        </div>
+        
+        <div style="margin-top: 15px; font-size: 18px;">
+            Speed: <span id="speed">0</span>
+        </div>
+        <div style="margin-top: 10px; font-size: 18px; color: #ffff00;">
+            Ammo: <span id="ammo-count">300</span>
+        </div>
     </div>
 
     <div id="leaderboard" style="position: absolute; top: 20px; right: 20px; color: white; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px; font-family: Arial, sans-serif; min-width: 200px;">
@@ -77,7 +86,8 @@
         W / S: Accelerate / Decelerate<br>
         UP / DOWN Arrow: Pitch<br>
         LEFT / RIGHT Arrow: Roll<br>
-        Click: Shoot
+        F: Fire Homing Missile<br>
+        SPACE: Deploy Flare
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
