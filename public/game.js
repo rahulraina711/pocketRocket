@@ -99,6 +99,7 @@ const speedMin = 0.5;
 const speedMax = 5.0;
 let currentSpeed = 1.0;
 const turnSpeed = 0.04;
+const pitchSped = 0.02;
 
 const keys = { w: false, s: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
 
@@ -116,6 +117,10 @@ document.getElementById('start-btn').addEventListener('click', () => {
         <div style="margin-top: 15px; font-size: 18px;">Speed: <span id="speed">0</span></div>
         <div style="margin-top: 10px; font-size: 18px; color: #ffaa00;" id="flare-ui">Flares: <span id="flare-count">3</span> [SPACE]</div>
         <div style="margin-top: 5px; font-size: 18px; color: #ffffff;" id="missile-ui">Missile: READY [F]</div>
+        
+        <div id="missile-warning" style="display: none; position: fixed; top: 25%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; color: #ff0000; font-weight: 900; letter-spacing: 5px; text-shadow: 0 0 20px #ff0000, 3px 3px 0px #000; pointer-events: none; z-index: 200;">
+            MISSILE LOCK
+        </div>
     `;
     
     document.getElementById('controls-hint').innerHTML = `
@@ -449,7 +454,7 @@ document.addEventListener('keydown', (e) => {
     // Fire Homing Missile (Instant Client-Side Spawning)
     if (key === 'f' && myJet && !isDead && !isGameOver && gameStarted) {
         if (missileCooldown <= 0) { 
-            missileCooldown = 1.0; 
+            missileCooldown = 6.0; // INCREASED: 6 Second Cooldown
             
             const misUI = document.getElementById('missile-ui');
             if(misUI) { misUI.innerText = "Missile: FIRED!"; misUI.style.color = "#ff0000"; }
@@ -457,10 +462,7 @@ document.addEventListener('keydown', (e) => {
             const pos = { x: myJet.position.x, y: myJet.position.y, z: myJet.position.z };
             const quat = { x: myJet.quaternion.x, y: myJet.quaternion.y, z: myJet.quaternion.z, w: myJet.quaternion.w };
             
-            // 1. SPAWN INSTANTLY FOR YOURSELF (Zero Lag)
             createMissile(pos, quat, socket.id);
-
-            // 2. TELL THE SERVER TO SPAWN IT FOR EVERYONE ELSE
             socket.emit('fireMissile', { position: pos, quaternion: quat }); 
         }
     }
@@ -495,12 +497,14 @@ function updateIndicators() {
     if (!myJet || isDead || !gameStarted) {
         document.getElementById('enemy-indicator').style.display = 'none';
         document.getElementById('coin-indicator').style.display = 'none';
+        document.getElementById('targeting-hud').style.display = 'none';
         return;
     }
 
-    // 1. Find Nearest Enemy
     let nearestEnemy = null;
     let minEnemyDist = Infinity;
+    
+    // 1. Find the absolute closest enemy for the HUD and Arrows
     for (let id in otherPlayers) {
         const enemy = otherPlayers[id];
         if (enemy.visible) {
@@ -509,7 +513,6 @@ function updateIndicators() {
         }
     }
 
-    // 2. Find Nearest Coin
     let nearestCoin = null;
     let minCoinDist = Infinity;
     for (let id in coinMeshes) {
@@ -517,41 +520,53 @@ function updateIndicators() {
         if (dist < minCoinDist) { minCoinDist = dist; nearestCoin = coinMeshes[id]; }
     }
 
-    // 3. Helper Function to calculate 2D screen position
-    function updateArrow(targetObj, domElement, dist) {
-        if (!targetObj) {
-            domElement.style.display = 'none';
-            return;
-        }
+    // 2. TARGETING HUD LOGIC (Aim Assist)
+    const hud = document.getElementById('targeting-hud');
+    if (nearestEnemy && minEnemyDist < 300) { // 300 is your missile scan radius!
+        const vector = nearestEnemy.position.clone();
+        vector.project(camera);
 
-        // Project 3D position to 2D screen space
+        // Check if the enemy is actually ON SCREEN and IN FRONT of the camera
+        if (vector.z < 1 && vector.x > -1 && vector.x < 1 && vector.y > -1 && vector.y < 1) {
+            hud.style.display = 'block';
+            let x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+            let y = (-(vector.y) * 0.5 + 0.5) * window.innerHeight;
+            
+            // Center the 60x60 box on the jet and add a cool slow-spinning effect
+            hud.style.left = `${x}px`;
+            hud.style.top = `${y}px`;
+            hud.style.transform = `translate(-50%, -50%) rotate(${Date.now() * 0.05}deg)`;
+        } else {
+            hud.style.display = 'none';
+        }
+    } else {
+        hud.style.display = 'none'; // No targets in range
+    }
+
+    // 3. Helper Function to calculate 2D screen position for off-screen arrows
+    function updateArrow(targetObj, domElement, dist) {
+        if (!targetObj) { domElement.style.display = 'none'; return; }
+
         const vector = targetObj.position.clone();
         vector.project(camera);
 
-        // If the object is on-screen AND in front of the camera, hide the arrow
+        // Hide arrow if object is on screen
         if (vector.z < 1 && vector.x > -1 && vector.x < 1 && vector.y > -1 && vector.y < 1) {
             domElement.style.display = 'none';
             return;
         }
 
         domElement.style.display = 'block';
-
-        // Convert projection math (-1 to +1) to screen pixels
         let x = (vector.x * 0.5 + 0.5) * window.innerWidth;
         let y = (-(vector.y) * 0.5 + 0.5) * window.innerHeight;
 
-        // If the object is BEHIND the camera, Three.js math inverts it. We must flip it back.
-        if (vector.z > 1) {
-            x = window.innerWidth - x;
-            y = window.innerHeight - y;
-        }
+        if (vector.z > 1) { x = window.innerWidth - x; y = window.innerHeight - y; }
 
-        // Math to clamp the arrow to the edge of the screen
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         const angle = Math.atan2(y - cy, x - cx);
         
-        const padding = 40; // Keep it 40px away from the absolute edge
+        const padding = 40;
         const rx = cx - padding;
         const ry = cy - padding;
 
@@ -559,7 +574,6 @@ function updateIndicators() {
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         
-        // Bounding box intersection math
         if (Math.abs(cos) * ry > Math.abs(sin) * rx) {
             clampedX = cos > 0 ? rx : -rx;
             clampedY = clampedX * Math.tan(angle);
@@ -568,23 +582,17 @@ function updateIndicators() {
             clampedX = clampedY / Math.tan(angle);
         }
 
-        clampedX += cx;
-        clampedY += cy;
+        clampedX += cx; clampedY += cy;
 
-        // Scale based on distance (closer = bigger arrow). Max scale 1.5, Min scale 0.5
         let scale = 1.5 - (dist / 1500);
         scale = Math.max(0.6, Math.min(scale, 1.5));
-
-        // Point the arrow outward (+90 degrees because our SVG points UP by default)
         const rotDeg = (angle * 180 / Math.PI) + 90;
 
-        // Apply CSS (Subtract 15 to center the 30x30 SVG)
         domElement.style.left = `${clampedX - 15}px`;
         domElement.style.top = `${clampedY - 15}px`;
         domElement.style.transform = `scale(${scale}) rotate(${rotDeg}deg)`;
     }
 
-    // Apply to both indicators
     updateArrow(nearestEnemy, document.getElementById('enemy-indicator'), minEnemyDist);
     updateArrow(nearestCoin, document.getElementById('coin-indicator'), minCoinDist);
 }
@@ -598,9 +606,16 @@ function animate() {
     
     if (missileCooldown > 0) { 
         missileCooldown -= 1/60; 
+        
+        // Update the UI with a live countdown timer
+        const misUI = document.getElementById('missile-ui');
+        if(misUI) {
+            misUI.innerText = "Missile: [" + Math.ceil(missileCooldown) + "s]";
+            misUI.style.color = "#ffaa00"; // Orange color while reloading
+        }
+        
         if (missileCooldown <= 0) {
             missileCooldown = 0;
-            const misUI = document.getElementById('missile-ui');
             if(misUI) { misUI.innerText = "Missile: READY [F]"; misUI.style.color = "#ffffff"; }
         }
     }
@@ -611,8 +626,8 @@ function animate() {
         const speedUI = document.getElementById('speed');
         if(speedUI) speedUI.innerText = Math.round(currentSpeed * 10);
         
-        if (keys['ArrowUp']) myJet.rotateX(-turnSpeed);
-        if (keys['ArrowDown']) myJet.rotateX(turnSpeed);
+        if (keys['ArrowUp']) myJet.rotateX(-pitchSped);
+        if (keys['ArrowDown']) myJet.rotateX(pitchSped);
         if (keys['ArrowLeft']) myJet.rotateZ(turnSpeed);
         if (keys['ArrowRight']) myJet.rotateZ(-turnSpeed);
         myJet.translateZ(-currentSpeed);
@@ -654,7 +669,7 @@ function animate() {
         m.life--;
         
         let targetPos = null;
-        let scanRadius = 300; // Increased tracking scan radius
+        let scanRadius = 220; // Increased tracking scan radius
 
         // 1. Flare Distraction
         for (let f of activeFlares) {
@@ -697,7 +712,7 @@ function animate() {
         }
 
         // 4. Move forward SUPER FAST (10 units per frame vs Jet's max 5)
-        m.mesh.translateZ(-4.5) 
+        m.mesh.translateZ(-3) 
 
         // 5. Check hits (Increased hit radius from 5 to 12 because of the high speed)
         // 5. Check hits (EVERYONE checks this to delete the visual missile)
@@ -751,6 +766,47 @@ function animate() {
         if (exp.life <= 0) { 
             scene.remove(exp.mesh); 
             explosions.splice(i, 1); 
+        }
+    }
+
+    // --- NEW: INCOMING MISSILE DETECTION ---
+    let incomingThreat = false;
+    if (myJet && !isDead && !isGameOver) {
+        for (let i = 0; i < missiles.length; i++) {
+            const m = missiles[i];
+            
+            // Only worry about missiles we didn't shoot
+            if (m.ownerId !== socket.id) {
+                const dist = m.mesh.position.distanceTo(myJet.position);
+                
+                // If it's within 400 units (hunting range)
+                if (dist < 400) {
+                    // Get the direction the missile is pointing (-Z axis)
+                    const missileForward = new THREE.Vector3(0, 0, -1).applyQuaternion(m.mesh.quaternion);
+                    
+                    // Get the direction from the missile to your jet
+                    const directionToYou = myJet.position.clone().sub(m.mesh.position).normalize();
+                    
+                    // The Dot Product checks if the two directions align. 
+                    // > 0.6 means the missile is pointing roughly inside a 50-degree cone toward you!
+                    if (missileForward.dot(directionToYou) > 0.6) {
+                        incomingThreat = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Flash the UI if locked on
+    const warningUI = document.getElementById('missile-warning');
+    if (warningUI) {
+        if (incomingThreat) {
+            warningUI.style.display = 'block';
+            // Rapidly flash opacity between 1.0 and 0.2 every 250 milliseconds
+            warningUI.style.opacity = (Date.now() % 500 < 250) ? 1.0 : 0.2; 
+        } else {
+            warningUI.style.display = 'none';
         }
     }
 
