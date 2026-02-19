@@ -258,8 +258,12 @@ function createJetMesh(color, name) {
     fuselageGeo.computeVertexNormals();
     group.add(new THREE.Mesh(fuselageGeo, matBody));
 
-    const noseGeo = new THREE.ConeGeometry(0.5, 2.5, 8); noseGeo.rotateX(Math.PI/2);
-    const nose = new THREE.Mesh(noseGeo, matGrey); nose.position.z = -3.75; group.add(nose);
+    // --- The Fix: Added a minus sign to point it forward (-Z) ---
+    const noseGeo = new THREE.ConeGeometry(0.5, 2.5, 8); 
+    noseGeo.rotateX(-Math.PI / 2); 
+    const nose = new THREE.Mesh(noseGeo, matGrey); 
+    nose.position.z = -3.75; 
+    group.add(nose);
 
     const cockpitGeo = new THREE.BoxGeometry(0.9, 0.6, 1.8);
     const cockPos = cockpitGeo.attributes.position;
@@ -274,21 +278,39 @@ function createJetMesh(color, name) {
     const iL = new THREE.Mesh(intakeGeo, matBody); iL.position.set(-0.9, 0, -0.5); group.add(iL);
     const iR = new THREE.Mesh(intakeGeo, matBody); iR.position.set(0.9, 0, -0.5); group.add(iR);
     
-    const wingGeo = new THREE.BoxGeometry(4, 0.1, 2.5);
+    // --- PERFECTLY CENTERED WINGS ---
+    const wingGeo = new THREE.BoxGeometry(9, 0.2, 3.5); 
     const wPos = wingGeo.attributes.position;
-    for(let i=0; i<wPos.count; i++){
-        wPos.setZ(i, wPos.getZ(i) + Math.abs(wPos.getX(i))*0.8);
-        if(Math.abs(wPos.getX(i))>1) wPos.setY(i, wPos.getY(i)*0.2);
+    
+    for(let i = 0; i < wPos.count; i++){
+        const x = wPos.getX(i);
+        
+        // Reduced the sweep slightly (from 0.8 to 0.5) so they don't stretch too far back
+        wPos.setZ(i, wPos.getZ(i) + Math.abs(x) * 0.5); 
+        
+        // Taper the tips
+        if(Math.abs(x) > 1.5) {
+            wPos.setY(i, wPos.getY(i) * 0.3);
+        }
     }
     wingGeo.computeVertexNormals();
-    const wings = new THREE.Mesh(wingGeo, matBody); wings.position.set(0, 0, 0.5); group.add(wings);
+    const wings = new THREE.Mesh(wingGeo, matBody); 
+    
+    // THE FIX: Slide the entire wing forward (from 0.5 to -0.8)
+    wings.position.set(0, 0, -0.8); 
+    group.add(wings);
 
-    const tailGeo = new THREE.BoxGeometry(0.1, 1.8, 1.5);
+    const tailGeo = new THREE.BoxGeometry(0.1, 2.5, 2.0); // Made taller and longer
     const tPos = tailGeo.attributes.position;
-    for(let i=0; i<tPos.count; i++){ if(tPos.getY(i)>0) { tPos.setZ(i, tPos.getZ(i)+1.2); tPos.setZ(i, tPos.getZ(i)*0.7); } }
+    for(let i=0; i<tPos.count; i++){ 
+        if(tPos.getY(i) > 0) { 
+            tPos.setZ(i, tPos.getZ(i) + 1.8); // Angle them further back
+            tPos.setX(i, tPos.getX(i) * 0.2); // Taper the tips
+        } 
+    }
     tailGeo.computeVertexNormals();
-    const tL = new THREE.Mesh(tailGeo, matBody); tL.position.set(-0.7, 0.8, 2); tL.rotation.z = Math.PI/12; group.add(tL);
-    const tR = new THREE.Mesh(tailGeo, matBody); tR.position.set(0.7, 0.8, 2); tR.rotation.z = -Math.PI/12; group.add(tR);
+    const tL = new THREE.Mesh(tailGeo, matBody); tL.position.set(-0.8, 0.8, 2.5); tL.rotation.z = Math.PI/10; group.add(tL);
+    const tR = new THREE.Mesh(tailGeo, matBody); tR.position.set(0.8, 0.8, 2.5); tR.rotation.z = -Math.PI/10; group.add(tR);
 
     const eGeo = new THREE.BoxGeometry(2.5, 0.1, 1.2);
     const ePos = eGeo.attributes.position;
@@ -424,6 +446,105 @@ function checkCollisions() {
     if (Math.abs(myJet.position.x) > limit || Math.abs(myJet.position.z) > limit || myJet.position.y > skyLimit) {
         socket.emit('playerCrashed'); return;
     }
+}
+
+// --- UI Indicator Logic ---
+function updateIndicators() {
+    if (!myJet || isDead || !gameStarted) {
+        document.getElementById('enemy-indicator').style.display = 'none';
+        document.getElementById('coin-indicator').style.display = 'none';
+        return;
+    }
+
+    // 1. Find Nearest Enemy
+    let nearestEnemy = null;
+    let minEnemyDist = Infinity;
+    for (let id in otherPlayers) {
+        const enemy = otherPlayers[id];
+        if (enemy.visible) {
+            let dist = myJet.position.distanceTo(enemy.position);
+            if (dist < minEnemyDist) { minEnemyDist = dist; nearestEnemy = enemy; }
+        }
+    }
+
+    // 2. Find Nearest Coin
+    let nearestCoin = null;
+    let minCoinDist = Infinity;
+    for (let id in coinMeshes) {
+        let dist = myJet.position.distanceTo(coinMeshes[id].position);
+        if (dist < minCoinDist) { minCoinDist = dist; nearestCoin = coinMeshes[id]; }
+    }
+
+    // 3. Helper Function to calculate 2D screen position
+    function updateArrow(targetObj, domElement, dist) {
+        if (!targetObj) {
+            domElement.style.display = 'none';
+            return;
+        }
+
+        // Project 3D position to 2D screen space
+        const vector = targetObj.position.clone();
+        vector.project(camera);
+
+        // If the object is on-screen AND in front of the camera, hide the arrow
+        if (vector.z < 1 && vector.x > -1 && vector.x < 1 && vector.y > -1 && vector.y < 1) {
+            domElement.style.display = 'none';
+            return;
+        }
+
+        domElement.style.display = 'block';
+
+        // Convert projection math (-1 to +1) to screen pixels
+        let x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+        let y = (-(vector.y) * 0.5 + 0.5) * window.innerHeight;
+
+        // If the object is BEHIND the camera, Three.js math inverts it. We must flip it back.
+        if (vector.z > 1) {
+            x = window.innerWidth - x;
+            y = window.innerHeight - y;
+        }
+
+        // Math to clamp the arrow to the edge of the screen
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const angle = Math.atan2(y - cy, x - cx);
+        
+        const padding = 40; // Keep it 40px away from the absolute edge
+        const rx = cx - padding;
+        const ry = cy - padding;
+
+        let clampedX, clampedY;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        
+        // Bounding box intersection math
+        if (Math.abs(cos) * ry > Math.abs(sin) * rx) {
+            clampedX = cos > 0 ? rx : -rx;
+            clampedY = clampedX * Math.tan(angle);
+        } else {
+            clampedY = sin > 0 ? ry : -ry;
+            clampedX = clampedY / Math.tan(angle);
+        }
+
+        clampedX += cx;
+        clampedY += cy;
+
+        // Scale based on distance (closer = bigger arrow). Max scale 1.5, Min scale 0.5
+        let scale = 1.5 - (dist / 1500);
+        scale = Math.max(0.6, Math.min(scale, 1.5));
+
+        // Point the arrow outward (+90 degrees because our SVG points UP by default)
+        const rotDeg = (angle * 180 / Math.PI) + 90;
+
+        // Apply CSS (Subtract 15 to center the 30x30 SVG)
+        domElement.style.left = `${clampedX - 15}px`;
+        domElement.style.top = `${clampedY - 15}px`;
+        domElement.style.transform = `scale(${scale}) rotate(${rotDeg}deg)`;
+    }
+
+    // Apply to both indicators
+    updateArrow(nearestEnemy, document.getElementById('enemy-indicator'), minEnemyDist);
+    updateArrow(nearestCoin, document.getElementById('coin-indicator'), minCoinDist);
 }
 
 // --- Main Loop ---
@@ -591,7 +712,10 @@ function animate() {
         }
     }
 
+    updateIndicators();
+
     renderer.render(scene, camera);
 }
+
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 animate();
