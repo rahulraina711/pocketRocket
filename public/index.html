@@ -84,4 +84,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="game.js"></script>
 </body>
+<div id="win-screen" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.9); color: gold; padding: 40px; border-radius: 10px; text-align: center; z-index: 30; border: 3px solid gold;">
+    <h1 id="winner-name" style="margin: 0 0 10px 0; font-size: 50px; text-transform: uppercase;">PLAYER WINS!</h1>
+    <div style="color: white; font-size: 20px;">Match restarting in <span id="win-timer">5</span>...</div>
+</div>
 </html>

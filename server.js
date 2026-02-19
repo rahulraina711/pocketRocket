@@ -7,7 +7,7 @@ const path = require('path');
 app.use(express.static(path.join(__dirname, 'public')));
 
 let players = {};
-let coins = {}; // Store coins here
+let coins = {};
 
 // Generate Buildings (Static)
 const buildings = [];
@@ -21,25 +21,23 @@ for (let i = 0; i < 50; i++) {
     });
 }
 
-// Generate Initial Coins
 function spawnCoin() {
     const id = Math.random().toString(36).substr(2, 9);
     coins[id] = {
         id: id,
         x: (Math.random() - 0.5) * 1000,
-        y: 50 + Math.random() * 300, // Random height
+        y: 50 + Math.random() * 300,
         z: (Math.random() - 0.5) * 1000
     };
     return coins[id];
 }
 
-// Create 50 coins to start
-for(let i=0; i<50; i++) spawnCoin();
+// Create EXACTLY 10 coins to start
+for(let i=0; i<10; i++) spawnCoin();
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    // Send world data
     socket.emit('initBuildings', buildings);
     socket.emit('initCoins', coins);
 
@@ -52,7 +50,7 @@ io.on('connection', (socket) => {
             z: (Math.random() - 0.5) * 500,
             quaternion: { x: 0, y: 0, z: 0, w: 1 },
             health: 100,
-            score: 0, // Init Score
+            score: 0, 
             color: Math.random() * 0xffffff
         };
 
@@ -83,24 +81,29 @@ io.on('connection', (socket) => {
         }
     });
 
-    // NEW: Handle Coin Collection
+    // --- UPDATED COIN LOGIC ---
     socket.on('collectCoin', (coinId) => {
-        // Check if coin still exists (prevents double collecting)
         if (coins[coinId] && players[socket.id]) {
-            delete coins[coinId]; // Remove from server
+            delete coins[coinId]; 
             
-            // Give points
             players[socket.id].score += 100;
-            
-            // Tell everyone to remove coin
             io.emit('removeCoin', coinId);
-            
-            // Update Leaderboard
             io.emit('updateLeaderboard', getLeaderboard());
-
-            // Spawn a replacement coin to keep the map full
-            const newCoin = spawnCoin();
-            io.emit('newCoin', newCoin);
+            
+            // Check for WIN CONDITION (1000 points)
+            if (players[socket.id].score >= 1000) {
+                // Tell everyone the game is over and who won
+                io.emit('gameOver', players[socket.id].name);
+                
+                // Wait 5 seconds, then reset the game for everyone
+                setTimeout(() => {
+                    resetGame();
+                }, 5000);
+            } else {
+                // Only spawn a replacement if the game isn't over
+                const newCoin = spawnCoin();
+                io.emit('newCoin', newCoin);
+            }
         }
     });
 
@@ -115,7 +118,7 @@ io.on('connection', (socket) => {
 
 function getLeaderboard() {
     return Object.values(players)
-        .sort((a, b) => b.score - a.score) // Sort highest first
+        .sort((a, b) => b.score - a.score)
         .map(p => ({ name: p.name, score: p.score }));
 }
 
@@ -134,6 +137,30 @@ function respawnPlayer(id) {
             }
         }, 5000);
     }
+}
+
+// --- NEW GAME RESET LOGIC ---
+function resetGame() {
+    // 1. Reset all players
+    Object.values(players).forEach(p => {
+        p.score = 0;
+        p.health = 100;
+        p.x = (Math.random() - 0.5) * 500;
+        p.y = 200;
+        p.z = (Math.random() - 0.5) * 500;
+        p.quaternion = { x: 0, y: 0, z: 0, w: 1 };
+        // We can reuse the respawn event to reset their position on the client
+        io.emit('respawn', p);
+    });
+    
+    // 2. Clear Leaderboard
+    io.emit('updateLeaderboard', getLeaderboard());
+
+    // 3. Clear old coins and spawn 10 new ones
+    coins = {};
+    io.emit('clearCoins'); 
+    for(let i=0; i<10; i++) spawnCoin();
+    io.emit('initCoins', coins);
 }
 
 http.listen(3000, () => { console.log('Server running on port 3000'); });

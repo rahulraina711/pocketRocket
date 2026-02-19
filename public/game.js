@@ -41,6 +41,7 @@ let buildingBoxes = [];
 let coinMeshes = {}; 
 let isDead = false;
 let gameStarted = false;
+let isGameOver = false;
 
 const speedMin = 0.5;
 const speedMax = 5.0;
@@ -155,6 +156,31 @@ socket.on('respawn', (data) => {
         otherPlayers[data.id].visible = true;
         otherPlayers[data.id].position.set(data.x, data.y, data.z);
     }
+});
+socket.on('clearCoins', () => {
+    for (let id in coinMeshes) {
+        scene.remove(coinMeshes[id]);
+    }
+    coinMeshes = {};
+});
+socket.on('gameOver', (winnerName) => {
+    isGameOver = true;
+    const screen = document.getElementById('win-screen');
+    document.getElementById('winner-name').innerText = winnerName + " WINS!";
+    screen.style.display = 'block';
+    
+    let countdown = 5;
+    document.getElementById('win-timer').innerText = countdown;
+    
+    const interval = setInterval(() => {
+        countdown--;
+        document.getElementById('win-timer').innerText = countdown;
+        if (countdown <= 0) {
+            clearInterval(interval);
+            screen.style.display = 'none';
+            isGameOver = false; // Allow movement again
+        }
+    }, 1000);
 });
 
 // --- Builder Functions ---
@@ -296,9 +322,12 @@ function createBullet(pos, quat, ownerId) {
 // --- Inputs & Collisions ---
 window.addEventListener('keydown', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
 window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
-window.addEventListener('mousedown', () => { if (myJet && !isDead && gameStarted) socket.emit('shoot', { position: myJet.position, quaternion: myJet.quaternion }); });
+window.addEventListener('mousedown', () => { 
+    if (myJet && !isDead && !isGameOver && gameStarted) socket.emit('shoot', { position: myJet.position, quaternion: myJet.quaternion }); 
+});
 
 function checkCollisions() {
+    if (!myJet || isDead || isGameOver) return;
     if (!myJet || isDead) return;
 
     // Coins
@@ -326,7 +355,7 @@ function animate() {
     requestAnimationFrame(animate);
     if (!gameStarted) return;
 
-    if (myJet && !isDead) {
+    if (myJet && !isDead && !isGameOver) {
         if (keys['w']) currentSpeed = Math.min(currentSpeed + 0.05, speedMax);
         if (keys['s']) currentSpeed = Math.max(currentSpeed - 0.05, speedMin);
         document.getElementById('speed').innerText = Math.round(currentSpeed * 10);
