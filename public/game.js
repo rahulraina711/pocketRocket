@@ -24,7 +24,7 @@ function getTerrainHeight(x, z) {
     return height - 20; 
 }
 
-const terrainGeo = new THREE.PlaneGeometry(2000, 2000, 80, 80);
+const terrainGeo = new THREE.PlaneGeometry(4000, 4000, 120, 120);
 terrainGeo.rotateX(-Math.PI / 2);
 const pos = terrainGeo.attributes.position;
 
@@ -51,13 +51,9 @@ for (let i = 0; i < pos.count; i++) {
 
 // Apply the colors to the geometry
 terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-terrainGeo.computeVertexNormals(); 
+terrainGeo.computeVertexNormals();
 
-const terrainMat = new THREE.MeshPhongMaterial({ 
-    vertexColors: true, // THIS TELLS IT TO USE OUR HEIGHT COLORS
-    flatShading: true, 
-    shininess: 0 
-});
+const terrainMat = new THREE.MeshPhongMaterial({ vertexColors: true, flatShading: true, shininess: 0 });
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 scene.add(terrain);
 
@@ -75,8 +71,8 @@ scene.add(terrain);
 // ocean.position.y = 10;     // Set water level just below the sand
 // scene.add(ocean);
 
-const boundarySize = 2000;
-const skyLimit = 800;
+const boundarySize = 4000; 
+const skyLimit = 1200;
 
 // --- Game Variables ---
 let myJet;
@@ -96,19 +92,60 @@ let missileCooldown = 0;
 const missileAimHelper = new THREE.Object3D(); 
 
 const speedMin = 0.5;
-const speedMax = 5.0;
-let currentSpeed = 1.0;
-const turnSpeed = 0.04;
+const speedMax = 1.5;
+let currentSpeed = 0.1;
+const turnSpeed = 0.02;
 const pitchSped = 0.02;
+let trails = []; // Tracks our wingtip contrails
 
 const keys = { w: false, s: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
 
+// --- Audio System (Fixed for Browser Autoplay) ---
+let audioCtx = null; // Don't initialize it yet!
+let lastBeepTime = 0;
+
+function playLockAlarm() {
+    if (!audioCtx) return; 
+    
+    // Force the browser to wake the audio up right before playing
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+    
+    try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.type = 'square'; 
+        osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
+        
+        // Volume set to 0.05 so it's loud but doesn't blow out your speakers
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    } catch (e) {
+        console.log("Audio blocked by browser:", e);
+    }
+}
+
 // --- Setup ---
 document.getElementById('start-btn').addEventListener('click', () => {
+    
     const nameInput = document.getElementById('username');
     const name = nameInput.value.trim() || "Pilot";
     document.getElementById('login-screen').style.display = 'none';
     
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } else if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
     document.getElementById('ui').innerHTML = `
         <div style="margin-bottom: 5px; font-size: 18px;">HULL INTEGRITY</div>
         <div style="width: 250px; height: 20px; background: rgba(255, 0, 0, 0.4); border: 2px solid white; border-radius: 5px; box-shadow: 0 0 5px black;">
@@ -257,7 +294,7 @@ socket.on('respawn', (data) => {
             myJet.rotation.set(0, 0, 0); 
             myJet.quaternion.set(0, 0, 0, 1);
         }
-        currentSpeed = 1.0;
+        currentSpeed = 0.1;
     } else if (otherPlayers[data.id]) {
         otherPlayers[data.id].visible = true;
         otherPlayers[data.id].targetPosition.set(data.x, data.y, data.z);
@@ -632,6 +669,27 @@ function animate() {
         if (keys['ArrowRight']) myJet.rotateZ(-turnSpeed);
         myJet.translateZ(-currentSpeed);
 
+        // --- WINGTIP CONTRAILS ---
+        // Only emit trails if going fast OR pulling a pitch maneuver
+        if (currentSpeed > 1.5 || keys['ArrowUp'] || keys['ArrowDown']) {
+            // Get the absolute world position of the left and right wingtips
+            // (If your wingspan is different, adjust the 4.5 value to match!)
+            const leftWing = new THREE.Vector3(-4.5, 0, 0).applyMatrix4(myJet.matrixWorld);
+            const rightWing = new THREE.Vector3(4.5, 0, 0).applyMatrix4(myJet.matrixWorld);
+            
+            function spawnTrail(pos) {
+                const geo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+                const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: false, opacity: 0.4 });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.copy(pos);
+                scene.add(mesh);
+                trails.push({ mesh: mesh, life: 20 }); // Lasts for 20 frames
+            }
+            
+            spawnTrail(leftWing);
+            spawnTrail(rightWing);
+        }
+
         const relativeCameraOffset = new THREE.Vector3(0, 10, 25);
         const cameraOffset = relativeCameraOffset.applyMatrix4(myJet.matrixWorld);
         camera.position.lerp(cameraOffset, 0.1);
@@ -711,11 +769,7 @@ function animate() {
             m.mesh.quaternion.slerp(missileAimHelper.quaternion, 0.3); 
         }
 
-        // 4. Move forward SUPER FAST (10 units per frame vs Jet's max 5)
-        m.mesh.translateZ(-3) 
-
-        // 5. Check hits (Increased hit radius from 5 to 12 because of the high speed)
-        // 5. Check hits (EVERYONE checks this to delete the visual missile)
+        m.mesh.translateZ(-0.7) 
         let hitTarget = false;
         
         // A. Check if it hit an enemy
@@ -769,48 +823,63 @@ function animate() {
         }
     }
 
-    // --- NEW: INCOMING MISSILE DETECTION ---
+    // --- UPDATED: INCOMING MISSILE DETECTION ---
     let incomingThreat = false;
     if (myJet && !isDead && !isGameOver) {
         for (let i = 0; i < missiles.length; i++) {
             const m = missiles[i];
             
-            // Only worry about missiles we didn't shoot
+            // If it's not your missile...
             if (m.ownerId !== socket.id) {
                 const dist = m.mesh.position.distanceTo(myJet.position);
                 
-                // If it's within 400 units (hunting range)
-                if (dist < 400) {
-                    // Get the direction the missile is pointing (-Z axis)
-                    const missileForward = new THREE.Vector3(0, 0, -1).applyQuaternion(m.mesh.quaternion);
-                    
-                    // Get the direction from the missile to your jet
-                    const directionToYou = myJet.position.clone().sub(m.mesh.position).normalize();
-                    
-                    // The Dot Product checks if the two directions align. 
-                    // > 0.6 means the missile is pointing roughly inside a 50-degree cone toward you!
-                    if (missileForward.dot(directionToYou) > 0.6) {
-                        incomingThreat = true;
-                        break;
-                    }
+                // ...and it's within 250 units, SOUND THE ALARM! 
+                // No more finicky angle math.
+                if (dist < 250) {
+                    incomingThreat = true;
+                    break;
                 }
             }
         }
     }
 
-    // Flash the UI if locked on
-    const warningUI = document.getElementById('missile-warning');
-    if (warningUI) {
-        if (incomingThreat) {
-            warningUI.style.display = 'block';
-            // Rapidly flash opacity between 1.0 and 0.2 every 250 milliseconds
-            warningUI.style.opacity = (Date.now() % 500 < 250) ? 1.0 : 0.2; 
-        } else {
-            warningUI.style.display = 'none';
+    // Failsafe: If the HTML div is missing, create it dynamically!
+    let warningUI = document.getElementById('missile-warning');
+    if (!warningUI) {
+        warningUI = document.createElement('div');
+        warningUI.id = 'missile-warning';
+        warningUI.style.cssText = 'display: none; position: fixed; top: 25%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; color: #ff0000; font-weight: 900; letter-spacing: 5px; text-shadow: 0 0 20px #ff0000, 3px 3px 0px #000; pointer-events: none; z-index: 200;';
+        document.body.appendChild(warningUI);
+    }
+
+    // Trigger UI and Audio
+    if (incomingThreat) {
+        warningUI.style.display = 'block';
+        warningUI.innerText = "TARGET LOCKED";
+        warningUI.style.opacity = (Date.now() % 300 < 150) ? 1.0 : 0.2; 
+        
+        if (Date.now() - lastBeepTime > 300) {
+            playLockAlarm();
+            lastBeepTime = Date.now();
         }
+    } else {
+        warningUI.style.display = 'none';
     }
 
     updateIndicators();
+
+    // --- Animate Contrails ---
+    for (let i = trails.length - 1; i >= 0; i--) {
+        let t = trails[i];
+        t.life--;
+        t.mesh.material.opacity -= 0.02;     // Fade out
+        t.mesh.scale.multiplyScalar(0.85);   // Shrink
+        
+        if (t.life <= 0) {
+            scene.remove(t.mesh);
+            trails.splice(i, 1);
+        }
+    }
 
     renderer.render(scene, camera);
 }
