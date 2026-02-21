@@ -727,7 +727,7 @@ function animate() {
         m.life--;
         
         let targetPos = null;
-        let scanRadius = 220; // Increased tracking scan radius
+        let scanRadius = 400; // Increased tracking scan radius
 
         // 1. Flare Distraction
         for (let f of activeFlares) {
@@ -769,7 +769,7 @@ function animate() {
             m.mesh.quaternion.slerp(missileAimHelper.quaternion, 0.3); 
         }
 
-        m.mesh.translateZ(-0.7) 
+        m.mesh.translateZ(-2.5) 
         let hitTarget = false;
         
         // A. Check if it hit an enemy
@@ -822,53 +822,112 @@ function animate() {
             explosions.splice(i, 1); 
         }
     }
+    
+    let incomingThreat = false; // The master alarm switch
 
-    // --- UPDATED: INCOMING MISSILE DETECTION ---
-    let incomingThreat = false;
-    if (myJet && !isDead && !isGameOver) {
-        for (let i = 0; i < missiles.length; i++) {
-            const m = missiles[i];
+    // --- The Homing Missile Logic ---
+    for (let i = missiles.length - 1; i >= 0; i--) {
+        const m = missiles[i];
+        m.life--;
+        
+        let targetPos = null;
+        let scanRadius = 400; // INCREASED: So the missile can actually see you!
+
+        // 1. Flare Distraction
+        for (let f of activeFlares) {
+            if (m.mesh.position.distanceTo(f.mesh.position) < 150) { 
+                targetPos = f.mesh.position; 
+                break; 
+            }
+        }
+
+        // 2. Enemy Proximity Scan
+        if (!targetPos) {
+            // Check other players...
+            for (let id in otherPlayers) {
+                const enemy = otherPlayers[id];
+                if (enemy.visible && m.ownerId !== enemy.playerId) {
+                    let dist = m.mesh.position.distanceTo(enemy.position);
+                    if (dist < scanRadius) {
+                        scanRadius = dist;
+                        targetPos = enemy.position;
+                    }
+                }
+            }
             
-            // If it's not your missile...
-            if (m.ownerId !== socket.id) {
-                const dist = m.mesh.position.distanceTo(myJet.position);
-                
-                // ...and it's within 250 units, SOUND THE ALARM! 
-                // No more finicky angle math.
-                if (dist < 250) {
-                    incomingThreat = true;
-                    break;
+            // CHECK IF IT IS HUNTING YOU:
+            if (m.ownerId !== socket.id && !isDead) {
+                let dist = m.mesh.position.distanceTo(myJet.position);
+                if (dist < scanRadius) { 
+                    targetPos = myJet.position; 
+                    
+                    // BINGO! The missile is officially chasing you. SOUND THE ALARM!
+                    incomingThreat = true; 
                 }
             }
         }
-    }
 
-    // Failsafe: If the HTML div is missing, create it dynamically!
-    let warningUI = document.getElementById('missile-warning');
-    if (!warningUI) {
-        warningUI = document.createElement('div');
-        warningUI.id = 'missile-warning';
-        warningUI.style.cssText = 'display: none; position: fixed; top: 25%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; color: #ff0000; font-weight: 900; letter-spacing: 5px; text-shadow: 0 0 20px #ff0000, 3px 3px 0px #000; pointer-events: none; z-index: 200;';
-        document.body.appendChild(warningUI);
-    }
-
-    // Trigger UI and Audio
-    if (incomingThreat) {
-        warningUI.style.display = 'block';
-        warningUI.innerText = "TARGET LOCKED";
-        warningUI.style.opacity = (Date.now() % 300 < 150) ? 1.0 : 0.2; 
-        
-        if (Date.now() - lastBeepTime > 300) {
-            playLockAlarm();
-            lastBeepTime = Date.now();
+        // 3. Curve towards target
+        if (targetPos) {
+            missileAimHelper.position.copy(m.mesh.position);
+            missileAimHelper.lookAt(targetPos);
+            missileAimHelper.rotateY(Math.PI); 
+            m.mesh.quaternion.slerp(missileAimHelper.quaternion, 0.3); 
         }
-    } else {
-        warningUI.style.display = 'none';
+
+        // 4. FIX THE SPEED: Travels at 2.5 so it can actually catch a jet flying at 1.5!
+        m.mesh.translateZ(-2.5); 
+        
+        let hitTarget = false;
+        
+        // A. Check if it hit an enemy
+        for (let id in otherPlayers) {
+            const enemy = otherPlayers[id];
+            if (enemy.visible && m.mesh.position.distanceTo(enemy.position) < 20) {
+                hitTarget = true;
+                if (m.ownerId === socket.id && !isDead) socket.emit('missileHit', id);
+                break;
+            }
+        }
+
+        // B. Check if it hit YOU
+        if (!hitTarget && !isDead && m.mesh.position.distanceTo(myJet.position) < 20) {
+            if (m.ownerId !== socket.id) hitTarget = true;
+        }
+
+        // C. Delete the missile for everyone
+        if (hitTarget) {
+            createExplosion(m.mesh.position);
+            m.life = 0; 
+        }
+        
+        // 6. Blow up if it hits the ground
+        const mGroundHeight = getTerrainHeight(m.mesh.position.x, m.mesh.position.z);
+        if (m.mesh.position.y < mGroundHeight) m.life = 0;
+
+        if (m.life <= 0) { scene.remove(m.mesh); missiles.splice(i, 1); }
+    }
+
+    // --- Trigger the UI and Audio Alarm ---
+    let warningUI = document.getElementById('missile-warning');
+    if (warningUI) {
+        if (incomingThreat) {
+            warningUI.style.display = 'block';
+            warningUI.style.opacity = (Date.now() % 300 < 150) ? 1.0 : 0.2; 
+            
+            if (Date.now() - lastBeepTime > 300) {
+                playLockAlarm();
+                lastBeepTime = Date.now();
+            }
+        } else {
+            warningUI.style.display = 'none';
+        }
     }
 
     updateIndicators();
 
     // --- Animate Contrails ---
+    
     for (let i = trails.length - 1; i >= 0; i--) {
         let t = trails[i];
         t.life--;
