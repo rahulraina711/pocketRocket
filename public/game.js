@@ -28,7 +28,6 @@ const terrainGeo = new THREE.PlaneGeometry(4000, 4000, 120, 120);
 terrainGeo.rotateX(-Math.PI / 2);
 const pos = terrainGeo.attributes.position;
 
-// NEW: Array to hold our vertex colors
 const colors = []; 
 const color = new THREE.Color();
 
@@ -36,7 +35,6 @@ for (let i = 0; i < pos.count; i++) {
     const h = getTerrainHeight(pos.getX(i), pos.getZ(i));
     pos.setY(i, h);
 
-    // Color the terrain based on how high it is!
     if (h < 15) {
         color.setHex(0xC2B280); // Sand / Beach
     } else if (h < 65) {
@@ -49,27 +47,12 @@ for (let i = 0; i < pos.count; i++) {
     colors.push(color.r, color.g, color.b);
 }
 
-// Apply the colors to the geometry
 terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 terrainGeo.computeVertexNormals();
 
 const terrainMat = new THREE.MeshPhongMaterial({ vertexColors: true, flatShading: true, shininess: 0 });
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 scene.add(terrain);
-
-// --- The Animated Ocean ---
-// const oceanGeo = new THREE.PlaneGeometry(2000, 2000);
-// oceanGeo.rotateX(-Math.PI / 2);
-// const oceanMat = new THREE.MeshPhongMaterial({
-//     color: 0x0088cc,       // Deep ocean blue
-//     transparent: true,     // Make it see-through!
-//     opacity: 0.75,
-//     shininess: 100,        // Makes the sunlight reflect off the water
-//     flatShading: true
-// });
-// const ocean = new THREE.Mesh(oceanGeo, oceanMat);
-// ocean.position.y = 10;     // Set water level just below the sand
-// scene.add(ocean);
 
 const boundarySize = 4000; 
 const skyLimit = 1200;
@@ -89,6 +72,7 @@ let explosions = [];
 let myFlares = 3;         
 let flareCooldown = 0;    
 let missileCooldown = 0;
+let threatTimer = 0; // Tracks our Sticky UI Alarm
 const missileAimHelper = new THREE.Object3D(); 
 
 const speedMin = 0.5;
@@ -96,18 +80,17 @@ const speedMax = 1.5;
 let currentSpeed = 0.1;
 const turnSpeed = 0.02;
 const pitchSped = 0.02;
-let trails = []; // Tracks our wingtip contrails
+let trails = []; 
 
 const keys = { w: false, s: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
 
-// --- Audio System (Fixed for Browser Autoplay) ---
-let audioCtx = null; // Don't initialize it yet!
+// --- Audio System ---
+let audioCtx = null; 
 let lastBeepTime = 0;
 
 function playLockAlarm() {
     if (!audioCtx) return; 
     
-    // Force the browser to wake the audio up right before playing
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
@@ -120,7 +103,6 @@ function playLockAlarm() {
         osc.frequency.setValueAtTime(400, audioCtx.currentTime);
         osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
         
-        // Volume set to 0.05 so it's loud but doesn't blow out your speakers
         gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
         
@@ -154,10 +136,6 @@ document.getElementById('start-btn').addEventListener('click', () => {
         <div style="margin-top: 15px; font-size: 18px;">Speed: <span id="speed">0</span></div>
         <div style="margin-top: 10px; font-size: 18px; color: #ffaa00;" id="flare-ui">Flares: <span id="flare-count">3</span> [SPACE]</div>
         <div style="margin-top: 5px; font-size: 18px; color: #ffffff;" id="missile-ui">Missile: READY [F]</div>
-        
-        <div id="missile-warning" style="display: none; position: fixed; top: 25%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; color: #ff0000; font-weight: 900; letter-spacing: 5px; text-shadow: 0 0 20px #ff0000, 3px 3px 0px #000; pointer-events: none; z-index: 200;">
-            MISSILE LOCK
-        </div>
     `;
     
     document.getElementById('controls-hint').innerHTML = `
@@ -233,9 +211,7 @@ socket.on('playerMoved', (playerInfo) => {
     }
 });
 
-// --- Combat Socket Listeners ---
 socket.on('missileFired', (data) => {
-    // Only spawn incoming network missiles if you aren't the one who shot it!
     if (data.ownerId !== socket.id) {
         createMissile(data.position, data.quaternion, data.ownerId);
     }
@@ -327,9 +303,7 @@ function createJetMesh(color, name) {
     const group = new THREE.Group();
     const matBody = new THREE.MeshPhongMaterial({ color: color, flatShading: true, shininess: 50 });
     const matGrey = new THREE.MeshPhongMaterial({ color: 0x555555, flatShading: true });
-    const matDark = new THREE.MeshPhongMaterial({ color: 0x222222, flatShading: true });
     const matGlass = new THREE.MeshPhongMaterial({ color: 0x00aaff, opacity: 0.6, transparent: true, shininess: 100 });
-    const matGlow = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
 
     const fuselageGeo = new THREE.BoxGeometry(1.2, 1, 5);
     const fusPos = fuselageGeo.attributes.position;
@@ -339,7 +313,6 @@ function createJetMesh(color, name) {
     fuselageGeo.computeVertexNormals();
     group.add(new THREE.Mesh(fuselageGeo, matBody));
 
-    // --- The Fix: Added a minus sign to point it forward (-Z) ---
     const noseGeo = new THREE.ConeGeometry(0.5, 2.5, 8); 
     noseGeo.rotateX(-Math.PI / 2); 
     const nose = new THREE.Mesh(noseGeo, matGrey); 
@@ -359,34 +332,25 @@ function createJetMesh(color, name) {
     const iL = new THREE.Mesh(intakeGeo, matBody); iL.position.set(-0.9, 0, -0.5); group.add(iL);
     const iR = new THREE.Mesh(intakeGeo, matBody); iR.position.set(0.9, 0, -0.5); group.add(iR);
     
-    // --- PERFECTLY CENTERED WINGS ---
     const wingGeo = new THREE.BoxGeometry(9, 0.2, 3.5); 
     const wPos = wingGeo.attributes.position;
     
     for(let i = 0; i < wPos.count; i++){
         const x = wPos.getX(i);
-        
-        // Reduced the sweep slightly (from 0.8 to 0.5) so they don't stretch too far back
         wPos.setZ(i, wPos.getZ(i) + Math.abs(x) * 0.5); 
-        
-        // Taper the tips
-        if(Math.abs(x) > 1.5) {
-            wPos.setY(i, wPos.getY(i) * 0.3);
-        }
+        if(Math.abs(x) > 1.5) wPos.setY(i, wPos.getY(i) * 0.3);
     }
     wingGeo.computeVertexNormals();
     const wings = new THREE.Mesh(wingGeo, matBody); 
-    
-    // THE FIX: Slide the entire wing forward (from 0.5 to -0.8)
     wings.position.set(0, 0, -0.8); 
     group.add(wings);
 
-    const tailGeo = new THREE.BoxGeometry(0.1, 2.5, 2.0); // Made taller and longer
+    const tailGeo = new THREE.BoxGeometry(0.1, 2.5, 2.0); 
     const tPos = tailGeo.attributes.position;
     for(let i=0; i<tPos.count; i++){ 
         if(tPos.getY(i) > 0) { 
-            tPos.setZ(i, tPos.getZ(i) + 1.8); // Angle them further back
-            tPos.setX(i, tPos.getX(i) * 0.2); // Taper the tips
+            tPos.setZ(i, tPos.getZ(i) + 1.8); 
+            tPos.setX(i, tPos.getX(i) * 0.2); 
         } 
     }
     tailGeo.computeVertexNormals();
@@ -425,25 +389,20 @@ function addOtherJet(playerInfo) {
 function createMissile(pos, quat, ownerId) {
     const group = new THREE.Group();
     
-    // Missile Body
     const bodyGeo = new THREE.CylinderGeometry(0.3, 0.3, 3, 8);
     bodyGeo.rotateX(Math.PI / 2);
     const bodyMat = new THREE.MeshPhongMaterial({ color: 0xffffff });
     group.add(new THREE.Mesh(bodyGeo, bodyMat));
     
-    // Missile Head (Red Tip)
     const headGeo = new THREE.ConeGeometry(0.3, 0.8, 8);
     headGeo.rotateX(Math.PI / 2);
-    // THE FIX: Use .translate() instead of .position
     headGeo.translate(0, 0, -1.9); 
     const headMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
     group.add(new THREE.Mesh(headGeo, headMat));
 
-    // Safely apply position and rotation
     group.position.set(pos.x, pos.y, pos.z);
     group.quaternion.set(quat.x, quat.y, quat.z, quat.w);
     
-    // Spawn just in front of the nose so it doesn't clip into you
     group.translateZ(-4); 
     scene.add(group);
     
@@ -466,7 +425,6 @@ function createExplosion(pos) {
     explosion.position.copy(pos);
     scene.add(explosion);
     
-    // Explosion lasts for half a second (30 frames)
     explosions.push({ mesh: explosion, life: 30 }); 
 }
 
@@ -476,7 +434,6 @@ document.addEventListener('keydown', (e) => {
     
     const key = e.key.toLowerCase();
     
-    // Deploy Flares
     if (e.code === 'Space' && myJet && !isDead && !isGameOver) {
         if (myFlares > 0 && flareCooldown <= 0) {
             myFlares--;
@@ -488,10 +445,9 @@ document.addEventListener('keydown', (e) => {
         }
     }
 
-    // Fire Homing Missile (Instant Client-Side Spawning)
     if (key === 'f' && myJet && !isDead && !isGameOver && gameStarted) {
         if (missileCooldown <= 0) { 
-            missileCooldown = 6.0; // INCREASED: 6 Second Cooldown
+            missileCooldown = 6.0; 
             
             const misUI = document.getElementById('missile-ui');
             if(misUI) { misUI.innerText = "Missile: FIRED!"; misUI.style.color = "#ff0000"; }
@@ -509,20 +465,17 @@ document.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key)) keys
 function checkCollisions() {
     if (!myJet || isDead || isGameOver) return;
     
-    // Coins
     for (let id in coinMeshes) {
         if (myJet.position.distanceTo(coinMeshes[id].position) < 15) { 
             socket.emit('collectCoin', id); removeCoin(id); 
         }
     }
     
-    // Just the pure Terrain height check again!
     const groundHeight = getTerrainHeight(myJet.position.x, myJet.position.z);
     if (myJet.position.y < groundHeight + 2) { 
         socket.emit('playerCrashed'); return; 
     }
     
-    // World bounds
     const limit = boundarySize / 2;
     if (Math.abs(myJet.position.x) > limit || Math.abs(myJet.position.z) > limit || myJet.position.y > skyLimit) {
         socket.emit('playerCrashed'); return;
@@ -541,7 +494,6 @@ function updateIndicators() {
     let nearestEnemy = null;
     let minEnemyDist = Infinity;
     
-    // 1. Find the absolute closest enemy for the HUD and Arrows
     for (let id in otherPlayers) {
         const enemy = otherPlayers[id];
         if (enemy.visible) {
@@ -557,19 +509,16 @@ function updateIndicators() {
         if (dist < minCoinDist) { minCoinDist = dist; nearestCoin = coinMeshes[id]; }
     }
 
-    // 2. TARGETING HUD LOGIC (Aim Assist)
     const hud = document.getElementById('targeting-hud');
-    if (nearestEnemy && minEnemyDist < 300) { // 300 is your missile scan radius!
+    if (nearestEnemy && minEnemyDist < 300) { 
         const vector = nearestEnemy.position.clone();
         vector.project(camera);
 
-        // Check if the enemy is actually ON SCREEN and IN FRONT of the camera
         if (vector.z < 1 && vector.x > -1 && vector.x < 1 && vector.y > -1 && vector.y < 1) {
             hud.style.display = 'block';
             let x = (vector.x * 0.5 + 0.5) * window.innerWidth;
             let y = (-(vector.y) * 0.5 + 0.5) * window.innerHeight;
             
-            // Center the 60x60 box on the jet and add a cool slow-spinning effect
             hud.style.left = `${x}px`;
             hud.style.top = `${y}px`;
             hud.style.transform = `translate(-50%, -50%) rotate(${Date.now() * 0.05}deg)`;
@@ -577,17 +526,15 @@ function updateIndicators() {
             hud.style.display = 'none';
         }
     } else {
-        hud.style.display = 'none'; // No targets in range
+        hud.style.display = 'none'; 
     }
 
-    // 3. Helper Function to calculate 2D screen position for off-screen arrows
     function updateArrow(targetObj, domElement, dist) {
         if (!targetObj) { domElement.style.display = 'none'; return; }
 
         const vector = targetObj.position.clone();
         vector.project(camera);
 
-        // Hide arrow if object is on screen
         if (vector.z < 1 && vector.x > -1 && vector.x < 1 && vector.y > -1 && vector.y < 1) {
             domElement.style.display = 'none';
             return;
@@ -644,11 +591,10 @@ function animate() {
     if (missileCooldown > 0) { 
         missileCooldown -= 1/60; 
         
-        // Update the UI with a live countdown timer
         const misUI = document.getElementById('missile-ui');
         if(misUI) {
             misUI.innerText = "Missile: [" + Math.ceil(missileCooldown) + "s]";
-            misUI.style.color = "#ffaa00"; // Orange color while reloading
+            misUI.style.color = "#ffaa00"; 
         }
         
         if (missileCooldown <= 0) {
@@ -669,11 +615,7 @@ function animate() {
         if (keys['ArrowRight']) myJet.rotateZ(-turnSpeed);
         myJet.translateZ(-currentSpeed);
 
-        // --- WINGTIP CONTRAILS ---
-        // Only emit trails if going fast OR pulling a pitch maneuver
         if (currentSpeed > 1.5 || keys['ArrowUp'] || keys['ArrowDown']) {
-            // Get the absolute world position of the left and right wingtips
-            // (If your wingspan is different, adjust the 4.5 value to match!)
             const leftWing = new THREE.Vector3(-4.5, 0, 0).applyMatrix4(myJet.matrixWorld);
             const rightWing = new THREE.Vector3(4.5, 0, 0).applyMatrix4(myJet.matrixWorld);
             
@@ -683,7 +625,7 @@ function animate() {
                 const mesh = new THREE.Mesh(geo, mat);
                 mesh.position.copy(pos);
                 scene.add(mesh);
-                trails.push({ mesh: mesh, life: 20 }); // Lasts for 20 frames
+                trails.push({ mesh: mesh, life: 20 });
             }
             
             spawnTrail(leftWing);
@@ -721,109 +663,15 @@ function animate() {
         if (f.life <= 0) { scene.remove(f.mesh); activeFlares.splice(i, 1); }
     }
 
-    // --- The Homing Missile Logic ---
-    for (let i = missiles.length - 1; i >= 0; i--) {
-        const m = missiles[i];
-        m.life--;
-        
-        let targetPos = null;
-        let scanRadius = 400; // Increased tracking scan radius
-
-        // 1. Flare Distraction
-        for (let f of activeFlares) {
-            if (m.mesh.position.distanceTo(f.mesh.position) < 150) { 
-                targetPos = f.mesh.position; 
-                break; 
-            }
-        }
-
-        // 2. Enemy Proximity Scan
-        if (!targetPos) {
-            for (let id in otherPlayers) {
-                const enemy = otherPlayers[id];
-                if (enemy.visible && m.ownerId !== enemy.playerId) {
-                    let dist = m.mesh.position.distanceTo(enemy.position);
-                    if (dist < scanRadius) {
-                        scanRadius = dist;
-                        targetPos = enemy.position;
-                    }
-                }
-            }
-            if (m.ownerId !== socket.id && !isDead) {
-                let dist = m.mesh.position.distanceTo(myJet.position);
-                if (dist < scanRadius) { targetPos = myJet.position; }
-            }
-        }
-
-        // 3. Curve towards target
-        if (targetPos) {
-            missileAimHelper.position.copy(m.mesh.position);
-            
-            // This aligns the +Z axis to the target
-            missileAimHelper.lookAt(targetPos);
-            
-            // THE FIX: Flip the math helper 180 degrees so its -Z axis (forward) faces the target!
-            missileAimHelper.rotateY(Math.PI); 
-            
-            // Now the missile will smoothly steer its nose toward the enemy
-            m.mesh.quaternion.slerp(missileAimHelper.quaternion, 0.3); 
-        }
-
-        m.mesh.translateZ(-2.5) 
-        let hitTarget = false;
-        
-        // A. Check if it hit an enemy
-        for (let id in otherPlayers) {
-            const enemy = otherPlayers[id];
-            if (enemy.visible && m.mesh.position.distanceTo(enemy.position) < 20) {
-                hitTarget = true;
-                // ONLY the shooter is allowed to send the damage event to the server
-                if (m.ownerId === socket.id && !isDead) {
-                    socket.emit('missileHit', id);
-                }
-                break;
-            }
-        }
-
-        // B. Check if it hit YOU (so the victim also deletes the missile on their screen)
-        if (!hitTarget && !isDead && m.mesh.position.distanceTo(myJet.position) < 20) {
-            // Make sure you don't instantly blow yourself up with your own missile!
-            if (m.ownerId !== socket.id) {
-                hitTarget = true;
-            }
-        }
-
-        // C. Delete the missile for everyone
-        if (hitTarget) {
-            createExplosion(m.mesh.position);
-            m.life = 0; 
-        }
-        
-        // 6. Blow up if it hits the ground
-        const mGroundHeight = getTerrainHeight(m.mesh.position.x, m.mesh.position.z);
-        if (m.mesh.position.y < mGroundHeight) {
-            m.life = 0;
-        }
-
-        if (m.life <= 0) { scene.remove(m.mesh); missiles.splice(i, 1); }
-    }
-
-    // --- Animate Explosions (Hit Markers) ---
     for (let i = explosions.length - 1; i >= 0; i--) {
         const exp = explosions[i];
         exp.life--;
-        
-        // Rapidly grow the sphere and fade it out
         exp.mesh.scale.addScalar(0.4); 
         exp.mesh.material.opacity -= 0.033; 
-        
-        if (exp.life <= 0) { 
-            scene.remove(exp.mesh); 
-            explosions.splice(i, 1); 
-        }
+        if (exp.life <= 0) { scene.remove(exp.mesh); explosions.splice(i, 1); }
     }
-    
-    let incomingThreat = false; // The master alarm switch
+
+    let incomingThreat = false; 
 
     // --- The Homing Missile Logic ---
     for (let i = missiles.length - 1; i >= 0; i--) {
@@ -831,9 +679,8 @@ function animate() {
         m.life--;
         
         let targetPos = null;
-        let scanRadius = 400; // INCREASED: So the missile can actually see you!
+        let scanRadius = 400;
 
-        // 1. Flare Distraction
         for (let f of activeFlares) {
             if (m.mesh.position.distanceTo(f.mesh.position) < 150) { 
                 targetPos = f.mesh.position; 
@@ -841,9 +688,7 @@ function animate() {
             }
         }
 
-        // 2. Enemy Proximity Scan
         if (!targetPos) {
-            // Check other players...
             for (let id in otherPlayers) {
                 const enemy = otherPlayers[id];
                 if (enemy.visible && m.ownerId !== enemy.playerId) {
@@ -855,32 +700,28 @@ function animate() {
                 }
             }
             
-            // CHECK IF IT IS HUNTING YOU:
             if (m.ownerId !== socket.id && !isDead) {
                 let dist = m.mesh.position.distanceTo(myJet.position);
                 if (dist < scanRadius) { 
                     targetPos = myJet.position; 
-                    
-                    // BINGO! The missile is officially chasing you. SOUND THE ALARM!
                     incomingThreat = true; 
                 }
             }
         }
 
-        // 3. Curve towards target
         if (targetPos) {
             missileAimHelper.position.copy(m.mesh.position);
             missileAimHelper.lookAt(targetPos);
             missileAimHelper.rotateY(Math.PI); 
-            m.mesh.quaternion.slerp(missileAimHelper.quaternion, 0.3); 
+            // Turning slowed slightly so it doesn't snap
+            m.mesh.quaternion.slerp(missileAimHelper.quaternion, 0.15); 
         }
 
-        // 4. FIX THE SPEED: Travels at 2.5 so it can actually catch a jet flying at 1.5!
-        m.mesh.translateZ(-2.5); 
+        // TRAVEL SPEED REDUCED: Was 2.5, now 1.5!
+        m.mesh.translateZ(-1.5); 
         
         let hitTarget = false;
         
-        // A. Check if it hit an enemy
         for (let id in otherPlayers) {
             const enemy = otherPlayers[id];
             if (enemy.visible && m.mesh.position.distanceTo(enemy.position) < 20) {
@@ -890,32 +731,37 @@ function animate() {
             }
         }
 
-        // B. Check if it hit YOU
         if (!hitTarget && !isDead && m.mesh.position.distanceTo(myJet.position) < 20) {
             if (m.ownerId !== socket.id) hitTarget = true;
         }
 
-        // C. Delete the missile for everyone
         if (hitTarget) {
             createExplosion(m.mesh.position);
             m.life = 0; 
         }
         
-        // 6. Blow up if it hits the ground
         const mGroundHeight = getTerrainHeight(m.mesh.position.x, m.mesh.position.z);
         if (m.mesh.position.y < mGroundHeight) m.life = 0;
 
         if (m.life <= 0) { scene.remove(m.mesh); missiles.splice(i, 1); }
     }
 
-    // --- Trigger the UI and Audio Alarm ---
+    // --- Trigger the UI and Audio Alarm (Sticky Timer Fix) ---
+    if (incomingThreat) {
+        threatTimer = 60; // Holds the alarm on screen for 1 second of frames
+    }
+
     let warningUI = document.getElementById('missile-warning');
     if (warningUI) {
-        if (incomingThreat) {
-            warningUI.style.display = 'block';
-            warningUI.style.opacity = (Date.now() % 300 < 150) ? 1.0 : 0.2; 
+        if (threatTimer > 0) {
+            threatTimer--; 
             
-            if (Date.now() - lastBeepTime > 300) {
+            warningUI.style.display = 'block';
+            
+            // Slower, bolder flash (500ms cycle) so it is highly visible
+            warningUI.style.opacity = (Date.now() % 500 < 250) ? 1.0 : 0.4; 
+            
+            if (Date.now() - lastBeepTime > 400) {
                 playLockAlarm();
                 lastBeepTime = Date.now();
             }
@@ -926,13 +772,11 @@ function animate() {
 
     updateIndicators();
 
-    // --- Animate Contrails ---
-    
     for (let i = trails.length - 1; i >= 0; i--) {
         let t = trails[i];
         t.life--;
-        t.mesh.material.opacity -= 0.02;     // Fade out
-        t.mesh.scale.multiplyScalar(0.85);   // Shrink
+        t.mesh.material.opacity -= 0.02;     
+        t.mesh.scale.multiplyScalar(0.85);   
         
         if (t.life <= 0) {
             scene.remove(t.mesh);

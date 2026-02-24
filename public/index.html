@@ -19,7 +19,7 @@
         }
 
         #death-screen {
-            display: none; /* Hidden by default */
+            display: none;
             position: absolute;
             top: 50%;
             left: 50%;
@@ -66,7 +66,7 @@
     <div id="leaderboard" style="position: absolute; top: 20px; right: 20px; color: white; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px; font-family: Arial, sans-serif; min-width: 200px;">
         <h3 style="margin: 0 0 10px 0; border-bottom: 1px solid white; padding-bottom: 5px;">LEADERBOARD</h3>
         <div id="leaderboard-list">
-            </div>
+        </div>
     </div>
 
     <div id="death-screen">
@@ -90,6 +90,10 @@
         SPACE: Deploy Flare
     </div>
 
+    <div id="missile-warning" style="display: none; position: fixed; top: 25%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; color: #ff0000; font-weight: 900; letter-spacing: 5px; text-shadow: 0 0 20px #ff0000, 3px 3px 0px #000; pointer-events: none; z-index: 200;">
+        MISSILE LOCK
+    </div>
+
     <svg id="enemy-indicator" width="30" height="30" viewBox="0 0 30 30" style="position: absolute; top: 0; left: 0; display: none; transform-origin: center; z-index: 100; pointer-events: none; filter: drop-shadow(0px 0px 4px rgba(0,0,0,0.8));">
         <polygon points="15,0 30,30 15,22 0,30" fill="#ff0000" stroke="#ffffff" stroke-width="2"/>
     </svg>
@@ -107,9 +111,10 @@
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="game.js"></script>
+
+    <div id="win-screen" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.9); color: gold; padding: 40px; border-radius: 10px; text-align: center; z-index: 30; border: 3px solid gold;">
+        <h1 id="winner-name" style="margin: 0 0 10px 0; font-size: 50px; text-transform: uppercase;">PLAYER WINS!</h1>
+        <div style="color: white; font-size: 20px;">Match restarting in <span id="win-timer">5</span>...</div>
+    </div>
 </body>
-<div id="win-screen" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.9); color: gold; padding: 40px; border-radius: 10px; text-align: center; z-index: 30; border: 3px solid gold;">
-    <h1 id="winner-name" style="margin: 0 0 10px 0; font-size: 50px; text-transform: uppercase;">PLAYER WINS!</h1>
-    <div style="color: white; font-size: 20px;">Match restarting in <span id="win-timer">5</span>...</div>
-</div>
 </html>
