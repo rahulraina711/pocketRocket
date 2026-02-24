@@ -55,7 +55,25 @@ io.on('connection', (socket) => {
         if (players[targetId]) {
             players[targetId].health -= 25; // 4 hits to kill
             io.emit('updateHealth', { id: targetId, health: players[targetId].health });
-            if (players[targetId].health <= 0) respawnPlayer(targetId);
+            
+            // If the target's health reaches 0, they die!
+            if (players[targetId].health <= 0) {
+                
+                // 1. Award 50 points to the shooter (and make sure they didn't shoot themselves!)
+                if (players[socket.id] && socket.id !== targetId) {
+                    players[socket.id].score += 50;
+                    io.emit('updateLeaderboard', getLeaderboard());
+                    
+                    // 2. Check if the shooter just won the game!
+                    if (players[socket.id].score >= 1000) {
+                        io.emit('gameOver', players[socket.id].name);
+                        setTimeout(() => resetGame(), 5000);
+                    }
+                }
+                
+                // 3. Respawn the defeated player
+                respawnPlayer(targetId);
+            }
         }
     });
 
