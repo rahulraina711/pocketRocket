@@ -21,12 +21,12 @@
         #death-screen {
             display: none;
             position: absolute;
-            top: 50%;
+            top: 10%; /* MOVED TO TOP (was 50%) */
             left: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%); /* Removed the Y translation */
             background: rgba(0, 0, 0, 0.8);
             color: red;
-            padding: 40px;
+            padding: 20px 40px; /* Slightly thinner padding */
             border-radius: 10px;
             text-align: center;
             z-index: 20;

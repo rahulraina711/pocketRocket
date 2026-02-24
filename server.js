@@ -53,29 +53,25 @@ io.on('connection', (socket) => {
 
     socket.on('missileHit', (targetId) => {
         if (players[targetId]) {
-            players[targetId].health -= 25; // 4 hits to kill
+            players[targetId].health -= 25; 
             io.emit('updateHealth', { id: targetId, health: players[targetId].health });
-            
-            // If the target's health reaches 0, they die!
             if (players[targetId].health <= 0) {
-                
-                // 1. Award 50 points to the shooter (and make sure they didn't shoot themselves!)
                 if (players[socket.id] && socket.id !== targetId) {
                     players[socket.id].score += 50;
                     io.emit('updateLeaderboard', getLeaderboard());
-                    
-                    // 2. Check if the shooter just won the game!
                     if (players[socket.id].score >= 1000) {
                         io.emit('gameOver', players[socket.id].name);
                         setTimeout(() => resetGame(), 5000);
                     }
                 }
-                
-                // 3. Respawn the defeated player
-                respawnPlayer(targetId);
+                // Pass the shooter's ID so the victim can watch them!
+                respawnPlayer(targetId, socket.id); 
             }
         }
     });
+
+    // If they crash into a mountain, there is no killer, so leave it empty
+    socket.on('playerCrashed', () => { if (players[socket.id]) respawnPlayer(socket.id); });
 
     // --- COIN LOGIC ---
     socket.on('collectCoin', (coinId) => {
@@ -94,8 +90,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('playerCrashed', () => { if (players[socket.id]) respawnPlayer(socket.id); });
-
     socket.on('disconnect', () => {
         delete players[socket.id];
         io.emit('playerDisconnected', socket.id);
@@ -107,9 +101,10 @@ function getLeaderboard() {
     return Object.values(players).sort((a, b) => b.score - a.score).map(p => ({ name: p.name, score: p.score }));
 }
 
-function respawnPlayer(id) {
+function respawnPlayer(id, killerId = null) {
     if (players[id]) {
-        io.to(id).emit('youDied');
+        // Send the killer's ID to the victim so they can spectate them!
+        io.to(id).emit('youDied', killerId); 
         io.emit('playerDied', id);
         setTimeout(() => {
             if (players[id]) {

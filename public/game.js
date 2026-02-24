@@ -65,6 +65,8 @@ let isDead = false;
 let gameStarted = false;
 let isGameOver = false;
 
+let spectatingId = null;
+
 // --- Combat Variables ---
 let missiles = [];
 let activeFlares = [];
@@ -234,8 +236,12 @@ socket.on('updateHealth', (data) => {
     }
 });
 
-socket.on('youDied', () => {
+socket.on('playerDied', (id) => { if (otherPlayers[id]) otherPlayers[id].visible = false; });
+
+socket.on('youDied', (killerId) => {
     isDead = true;
+    spectatingId = killerId; // Lock on to the person who killed us!
+    
     document.getElementById('death-screen').style.display = 'block';
     if(myJet) myJet.visible = false;
     let countdown = 5;
@@ -247,11 +253,11 @@ socket.on('youDied', () => {
     }, 1000);
 });
 
-socket.on('playerDied', (id) => { if (otherPlayers[id]) otherPlayers[id].visible = false; });
-
 socket.on('respawn', (data) => {
     if (data.id === socket.id) {
         isDead = false;
+        spectatingId = null; // Clear the killcam when we respawn
+        
         document.getElementById('death-screen').style.display = 'none';
         
         const healthBar = document.getElementById('health-bar');
@@ -639,6 +645,19 @@ function animate() {
 
         socket.emit('playerMovement', { x: myJet.position.x, y: myJet.position.y, z: myJet.position.z, quaternion: myJet.quaternion });
         checkCollisions();
+    } else if (isDead && spectatingId && otherPlayers[spectatingId] && otherPlayers[spectatingId].visible) {
+        // --- KILLCAM LOGIC ---
+        const killer = otherPlayers[spectatingId];
+        
+        // Pull the camera further back and up so you get a great view of your rival
+        const relativeCameraOffset = new THREE.Vector3(0, 15, 40);
+        
+        // Apply the killer's rotation and position to the camera offset
+        const cameraOffset = relativeCameraOffset.clone().applyQuaternion(killer.quaternion).add(killer.position);
+        
+        // Smoothly pan the camera over to the killer
+        camera.position.lerp(cameraOffset, 0.05);
+        camera.lookAt(killer.position);
     }
 
     for (let id in otherPlayers) {
