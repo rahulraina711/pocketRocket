@@ -59,11 +59,13 @@ const skyLimit = 1200;
 
 // --- Game Variables ---
 let myJet;
+let myColor; // NEW: Tracks your original paint job
 let otherPlayers = {};
 let coinMeshes = {}; 
 let isDead = false;
 let gameStarted = false;
 let isGameOver = false;
+
 
 let spectatingId = null;
 
@@ -230,8 +232,11 @@ socket.on('updateHealth', (data) => {
             else healthBar.style.background = '#ff0000';
         }
         if(myJet) {
+            // Flash red for damage
             myJet.children[0].material.color.setHex(0xff0000);
-            setTimeout(() => myJet.children[0].material.color.setHex(0x00ff00), 100);
+            
+            // THE FIX: Revert back to YOUR original color, not green!
+            setTimeout(() => myJet.children[0].material.color.setHex(myColor), 100);
         }
     }
 });
@@ -376,6 +381,7 @@ function createJetMesh(color, name) {
 }
 
 function addMyJet(playerInfo) {
+    myColor = playerInfo.color; // Save your unique color!
     myJet = createJetMesh(playerInfo.color, playerInfo.name);
     myJet.position.set(playerInfo.x, playerInfo.y, playerInfo.z);
     scene.add(myJet);
