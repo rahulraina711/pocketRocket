@@ -845,7 +845,7 @@ function animate() {
         }
 
         // TRAVEL SPEED REDUCED: Was 2.5, now 1.5!
-        m.mesh.translateZ(-1.5); 
+        m.mesh.translateZ(-2.5); 
         
         let hitTarget = false;
         
