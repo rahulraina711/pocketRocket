@@ -811,11 +811,18 @@ function animate() {
         for (let f of activeFlares) {
             if (m.mesh.position.distanceTo(f.mesh.position) < 150) { 
                 targetPos = f.mesh.position; 
+                m.isDistracted = true;
                 break; 
             }
         }
 
         if (!targetPos) {
+            if (m.isDistracted) {
+                createExplosion(m.mesh.position);
+                m.life = 0;
+                continue; // Skip the rest of the loop for this dead missile
+            }
+            
             for (let id in otherPlayers) {
                 const enemy = otherPlayers[id];
                 if (enemy.visible && m.ownerId !== enemy.playerId) {
@@ -851,7 +858,7 @@ function animate() {
         
         for (let id in otherPlayers) {
             const enemy = otherPlayers[id];
-            if (enemy.visible && m.mesh.position.distanceTo(enemy.position) < 20) {
+            if (enemy.visible && m.mesh.position.distanceTo(enemy.position) < 8) {
                 hitTarget = true;
                 if (m.ownerId === socket.id && !isDead) socket.emit('missileHit', id);
                 break;
