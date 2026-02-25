@@ -59,15 +59,32 @@ const skyLimit = 1200;
 
 // --- VISIBLE WORLD BOUNDARY ---
 const boundaryGeo = new THREE.BoxGeometry(boundarySize, skyLimit, boundarySize);
+
+// 1. The standard red transparent wall
 const boundaryMat = new THREE.MeshBasicMaterial({ 
-    color: 0xff0000,       // Red warning color
+    color: 0xff0000,       
     transparent: true, 
-    opacity: 0.15,         // Faint enough to see through, bright enough to notice
-    side: THREE.BackSide,  // Renders the inside of the box!
-    depthWrite: false      // Prevents visual glitching with distant mountains
+    opacity: 0.15,         
+    side: THREE.BackSide,  
+    depthWrite: false      
 });
-const boundaryMesh = new THREE.Mesh(boundaryGeo, boundaryMat);
-boundaryMesh.position.y = skyLimit / 2; // Lift the box so the floor is at Y=0
+
+// 2. A completely invisible material for the bottom floor
+const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
+
+// 3. Three.js Box faces order: Right, Left, Top, Bottom, Front, Back
+const boundaryMaterials = [
+    boundaryMat,  // Right (+x)
+    boundaryMat,  // Left (-x)
+    boundaryMat,  // Top (+y) Keep the ceiling!
+    invisibleMat, // Bottom (-y) <-- THIS REMOVES THE LOWER PLANE!
+    boundaryMat,  // Front (+z)
+    boundaryMat   // Back (-z)
+];
+
+// Apply the array of materials to the mesh
+const boundaryMesh = new THREE.Mesh(boundaryGeo, boundaryMaterials);
+boundaryMesh.position.y = skyLimit / 2; 
 scene.add(boundaryMesh);
 
 // --- PROCEDURAL CLOUDS ---
@@ -822,7 +839,7 @@ function animate() {
                 m.life = 0;
                 continue; // Skip the rest of the loop for this dead missile
             }
-            
+
             for (let id in otherPlayers) {
                 const enemy = otherPlayers[id];
                 if (enemy.visible && m.ownerId !== enemy.playerId) {
