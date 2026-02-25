@@ -57,6 +57,80 @@ scene.add(terrain);
 const boundarySize = 4000; 
 const skyLimit = 1200;
 
+// --- VISIBLE WORLD BOUNDARY ---
+const boundaryGeo = new THREE.BoxGeometry(boundarySize, skyLimit, boundarySize);
+const boundaryMat = new THREE.MeshBasicMaterial({ 
+    color: 0xff0000,       // Red warning color
+    transparent: true, 
+    opacity: 0.15,         // Faint enough to see through, bright enough to notice
+    side: THREE.BackSide,  // Renders the inside of the box!
+    depthWrite: false      // Prevents visual glitching with distant mountains
+});
+const boundaryMesh = new THREE.Mesh(boundaryGeo, boundaryMat);
+boundaryMesh.position.y = skyLimit / 2; // Lift the box so the floor is at Y=0
+scene.add(boundaryMesh);
+
+// --- PROCEDURAL CLOUDS ---
+const clouds = [];
+const cloudGeo = new THREE.SphereGeometry(1, 7, 7); // Very low-poly sphere
+const cloudMat = new THREE.MeshPhongMaterial({ 
+    color: 0xffffff, 
+    flatShading: true, 
+    transparent: true, 
+    opacity: 0.8 
+});
+
+// Generate 50 random clouds
+for (let i = 0; i < 50; i++) { 
+    const cloudGroup = new THREE.Group();
+    
+    // Clump 3 to 6 blobs together to form a single cloud
+    const blobs = 3 + Math.floor(Math.random() * 4);
+    for(let j = 0; j < blobs; j++) {
+        const blob = new THREE.Mesh(cloudGeo, cloudMat);
+        // Randomly stretch and squish the blobs
+        blob.scale.set(30 + Math.random()*40, 15 + Math.random()*20, 30 + Math.random()*40);
+        blob.position.set((Math.random()-0.5)*50, (Math.random()-0.5)*10, (Math.random()-0.5)*50);
+        cloudGroup.add(blob);
+    }
+    
+    // Scatter the clouds high up in the sky
+    cloudGroup.position.set(
+        (Math.random() - 0.5) * boundarySize,
+        400 + Math.random() * 400, // Altitudes between 400 and 800
+        (Math.random() - 0.5) * boundarySize
+    );
+    
+    scene.add(cloudGroup);
+    clouds.push(cloudGroup);
+}
+
+// --- DYNAMIC JET SHADOW ---
+const shadowCanvas = document.createElement('canvas');
+shadowCanvas.width = 128;
+shadowCanvas.height = 128;
+const shadowCtx = shadowCanvas.getContext('2d');
+
+// Draw a soft radial gradient (dark center, fading to transparent edges)
+const gradient = shadowCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
+gradient.addColorStop(0, 'rgba(0, 0, 0, 0.8)'); // Dark center
+gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');   // Invisible edge
+shadowCtx.fillStyle = gradient;
+shadowCtx.fillRect(0, 0, 128, 128);
+
+const shadowTex = new THREE.CanvasTexture(shadowCanvas);
+const shadowGeo = new THREE.PlaneGeometry(10, 10);
+const shadowMat = new THREE.MeshBasicMaterial({
+    map: shadowTex,
+    transparent: true,
+    opacity: 0.8,
+    depthWrite: false // Prevents glitching with the terrain
+});
+const myJetShadow = new THREE.Mesh(shadowGeo, shadowMat);
+myJetShadow.rotation.x = -Math.PI / 2; // Lay it flat on the ground
+myJetShadow.visible = false; // Hide it until we spawn
+scene.add(myJetShadow);
+
 // --- Game Variables ---
 let myJet;
 let myColor; // NEW: Tracks your original paint job
@@ -73,7 +147,7 @@ let spectatingId = null;
 let missiles = [];
 let activeFlares = [];
 let explosions = [];
-let myFlares = 3;         
+let myFlares = 10;         
 let flareCooldown = 0;    
 let missileCooldown = 0;
 let threatTimer = 0; // Tracks our Sticky UI Alarm
@@ -249,6 +323,7 @@ socket.on('youDied', (killerId) => {
     
     document.getElementById('death-screen').style.display = 'block';
     if(myJet) myJet.visible = false;
+    myJetShadow.visible = false;
     let countdown = 5;
     document.getElementById('timer').innerText = countdown;
     const interval = setInterval(() => {
@@ -270,7 +345,7 @@ socket.on('respawn', (data) => {
             healthBar.style.width = '100%';
             healthBar.style.background = '#00ff00';
         }
-        myFlares = 3;
+        myFlares = 10;
         flareCooldown = 0;
         const flareUI = document.getElementById('flare-count');
         if(flareUI) flareUI.innerText = myFlares;
@@ -651,6 +726,22 @@ function animate() {
 
         socket.emit('playerMovement', { x: myJet.position.x, y: myJet.position.y, z: myJet.position.z, quaternion: myJet.quaternion });
         checkCollisions();
+
+        const groundHeight = getTerrainHeight(myJet.position.x, myJet.position.z);
+        const altitude = myJet.position.y - groundHeight;
+        
+        myJetShadow.visible = true;
+        // Float the shadow slightly above the ground so it doesn't clip into the geometry
+        myJetShadow.position.set(myJet.position.x, groundHeight + 0.5, myJet.position.z);
+        
+        if (altitude > 0) {
+            // As you fly higher, the shadow gets bigger (up to 4x size)
+            const scale = Math.min(1 + (altitude * 0.015), 4);
+            myJetShadow.scale.set(scale, scale, scale);
+            
+            // As you fly higher, the shadow fades out
+            myJetShadow.material.opacity = Math.max(0, 0.8 - (altitude * 0.003));
+        }
     } else if (isDead && spectatingId && otherPlayers[spectatingId] && otherPlayers[spectatingId].visible) {
         // --- KILLCAM LOGIC ---
         const killer = otherPlayers[spectatingId];
@@ -678,6 +769,17 @@ function animate() {
     for (let id in coinMeshes) {
         coinMeshes[id].rotation.y += 0.02;
         coinMeshes[id].position.y += Math.sin(time * 2) * 0.05; 
+    }
+
+    // --- ANIMATE CLOUDS ---
+    for (let i = 0; i < clouds.length; i++) {
+        clouds[i].position.z -= 0.5; // Wind blowing forward
+        
+        // If a cloud blows off the edge of the map, wrap it back around!
+        if (clouds[i].position.z < -boundarySize / 2 - 100) {
+            clouds[i].position.z = boundarySize / 2 + 100;
+            clouds[i].position.x = (Math.random() - 0.5) * boundarySize; // Randomize horizontal position
+        }
     }
 
     for (let i = activeFlares.length - 1; i >= 0; i--) {
