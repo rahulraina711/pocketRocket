@@ -103,6 +103,8 @@ function getLeaderboard() {
 
 function respawnPlayer(id, killerId = null) {
     if (players[id]) {
+        players[id].score = 0; 
+        io.emit('updateLeaderboard', getLeaderboard());
         // Send the killer's ID to the victim so they can spectate them!
         io.to(id).emit('youDied', killerId); 
         io.emit('playerDied', id);
@@ -113,7 +115,6 @@ function respawnPlayer(id, killerId = null) {
                 players[id].y = 200;
                 players[id].z = (Math.random() - 0.5) * 500;
                 players[id].quaternion = { x: 0, y: 0, z: 0, w: 1 };
-                players[id].score = 0;
                 io.emit('respawn', players[id]);
             }
         }, 5000);
