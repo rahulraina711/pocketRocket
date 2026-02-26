@@ -113,6 +113,7 @@ function respawnPlayer(id, killerId = null) {
                 players[id].y = 200;
                 players[id].z = (Math.random() - 0.5) * 500;
                 players[id].quaternion = { x: 0, y: 0, z: 0, w: 1 };
+                players[id].score = 0;
                 io.emit('respawn', players[id]);
             }
         }, 5000);
