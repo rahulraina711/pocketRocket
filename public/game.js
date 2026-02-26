@@ -57,32 +57,59 @@ scene.add(terrain);
 const boundarySize = 4000; 
 const skyLimit = 1200;
 
-// --- VISIBLE WORLD BOUNDARY ---
-const boundaryGeo = new THREE.BoxGeometry(boundarySize, skyLimit, boundarySize);
+// --- VISIBLE WORLD BOUNDARY (SCI-FI GRID) ---
+// 1. Draw a single glowing square on a hidden canvas
+const gridCanvas = document.createElement('canvas');
+gridCanvas.width = 128;
+gridCanvas.height = 128;
+const gridCtx = gridCanvas.getContext('2d');
+gridCtx.strokeStyle = 'rgba(255, 0, 0, 0.8)'; // Bright red line
+gridCtx.lineWidth = 4;
+gridCtx.strokeRect(0, 0, 128, 128);
 
-// 1. The standard red transparent wall
-const boundaryMat = new THREE.MeshBasicMaterial({ 
-    color: 0xff0000,       
+// 2. Create tiling textures for the walls and ceiling
+const gridTexWall = new THREE.CanvasTexture(gridCanvas);
+gridTexWall.wrapS = THREE.RepeatWrapping;
+gridTexWall.wrapT = THREE.RepeatWrapping;
+gridTexWall.repeat.set(40, 12); // Tiles to make perfect squares on the walls
+
+const gridTexCeil = new THREE.CanvasTexture(gridCanvas);
+gridTexCeil.wrapS = THREE.RepeatWrapping;
+gridTexCeil.wrapT = THREE.RepeatWrapping;
+gridTexCeil.repeat.set(40, 40); // Tiles to make perfect squares on the massive ceiling
+
+// 3. Create the materials
+const wallMat = new THREE.MeshBasicMaterial({ 
+    map: gridTexWall,      // Apply the grid
+    color: 0xff0000,       // Boost the red glow
     transparent: true, 
-    opacity: 0.15,         
+    opacity: 0.35,         // Bright enough to see the lines clearly
     side: THREE.BackSide,  
     depthWrite: false      
 });
 
-// 2. A completely invisible material for the bottom floor
+const ceilMat = new THREE.MeshBasicMaterial({ 
+    map: gridTexCeil, 
+    color: 0xff0000, 
+    transparent: true, 
+    opacity: 0.35, 
+    side: THREE.BackSide, 
+    depthWrite: false 
+});
+
 const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 
-// 3. Three.js Box faces order: Right, Left, Top, Bottom, Front, Back
+// 4. Map the materials to the 6 sides of the box
 const boundaryMaterials = [
-    boundaryMat,  // Right (+x)
-    boundaryMat,  // Left (-x)
-    boundaryMat,  // Top (+y) Keep the ceiling!
-    invisibleMat, // Bottom (-y) <-- THIS REMOVES THE LOWER PLANE!
-    boundaryMat,  // Front (+z)
-    boundaryMat   // Back (-z)
+    wallMat,      // Right (+x)
+    wallMat,      // Left (-x)
+    ceilMat,      // Top (+y) (Gets the ceiling grid)
+    invisibleMat, // Bottom (-y) (Still completely invisible!)
+    wallMat,      // Front (+z)
+    wallMat       // Back (-z)
 ];
 
-// Apply the array of materials to the mesh
+const boundaryGeo = new THREE.BoxGeometry(boundarySize, skyLimit, boundarySize);
 const boundaryMesh = new THREE.Mesh(boundaryGeo, boundaryMaterials);
 boundaryMesh.position.y = skyLimit / 2; 
 scene.add(boundaryMesh);
